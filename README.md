@@ -62,6 +62,7 @@ Trailhead/
    │  ├─ Generating/              生成中（进度环 + 分步）                       [T5.4]
    │  └─ Settings/                 API / 用量 / 缓存                            [T7.*]
    └─ Assets.xcassets/             AppIcon 占位 + 品牌 AccentColor #1FA67A
+└─ TrailheadTests/                 App 单测（Settings Keychain 等 UI 状态逻辑）
 ```
 
 ### 分层职责（数据流：Views → ViewModels → Engine → Services）
@@ -91,7 +92,7 @@ Trailhead/
 
 ## 进度
 
-> 单测：**55 个全过**（`make test`，hostless macOS）；CI 双端 build + lint 绿。
+> 单测：**55 个 Core + 3 个 App 全过**（`make test`）；CI 双端 build + lint 绿。
 > **M1 数据闭环达成**：端到端「输入偏好 → 库里出现完整可信行程」已通过（mock 注入）。
 
 | 阶段 | 任务 | 状态 |
@@ -102,10 +103,10 @@ Trailhead/
 | 3 生成引擎 | T3.1 LLMProvider · T3.2 Prompt · T3.3 解析重试 · T3.4 FactChecker · T3.5 路线补全 · T3.6 generate 串联 · T3.7 进度 | ✅ |
 | 4–5 UI | 导航骨架 / 路线时间线 / 新建 / 生成中 / 地图（设计还原） | ✅ UI |
 | 引擎接线 | NewTrip→`engine.generate()`、GeneratingView 订阅 stage/progress、注入真实 client、错误提示 | ✅ |
-| 6 编辑重排 | T6.* 拖动/删除/替换 | ⬜ |
-| 7 设置 | T7.* API/用量/缓存（UI 已还原，key 写入待接 / 用量统计待接） | 🟡 |
+| 6 编辑重排 | T6.1 POI 重排已接 / T6.2 删除替换、T6.3 单日重生成待接 | 🟡 |
+| 7 设置 | T7.* API/用量/缓存（T7.1 Keychain 已接 / 用量统计待接） | 🟡 |
 | 8 打磨 | 空态✅ / 离线降级 / 回归 | 🟡 |
 
 引擎已接进 UI：`RootView` 持有 `ItineraryEngine`，「生成行程」→ 生成中（真实分步进度）→ 选中新行程；
-无 key / 配额 / 无候选等错误有明确文案。**剩下到 M2 可用**：T7.1 把两把 key 写进 Keychain（设置页），
-即可真实生成；再做 T6 编辑重排、T7.2 用量、T8 离线降级。详见 [`PDR-行迹.md`](PDR-行迹.md) §11–§12。
+无 key / 配额 / 无候选等错误有明确文案。设置页已可把高德 Web 服务 Key 与 DeepSeek Key 写入 Keychain；
+填好两把 key 后即可真实生成。后续按顺序做 T6.2 删除替换、T6.3 单日重生成、T7.2 用量、T8 离线降级。详见 [`PDR-行迹.md`](PDR-行迹.md) §11–§12。

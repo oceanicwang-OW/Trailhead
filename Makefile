@@ -39,9 +39,16 @@ build-ios: project ## 编译 iOS 模拟器版
 .PHONY: build
 build: build-mac build-ios ## 双端编译
 
-.PHONY: test
-test: ## 跑 TrailheadCore 单测（hostless，macOS 秒级）
+.PHONY: test-core
+test-core: ## 跑 TrailheadCore 单测（hostless，macOS 秒级）
 	cd Packages/TrailheadCore && xcodebuild test -scheme TrailheadCore -destination 'platform=macOS'
+
+.PHONY: test-app
+test-app: project ## 跑 App 单测（macOS host）
+	xcodebuild test -project $(PROJECT) -scheme $(SCHEME) -destination '$(MAC_DEST)' CODE_SIGNING_ALLOWED=NO
+
+.PHONY: test
+test: test-core test-app ## 跑全部单测
 
 .PHONY: lint
 lint: ## SwiftLint 检查

@@ -108,4 +108,25 @@ final class TripRepositoryTests: XCTestCase {
         let names = reloaded?.sortedDays.first?.sortedItems.map(\.name)
         XCTAssertEqual(names, ["B", "A"])
     }
+
+    func testReorderPOIsKeepsTransitSlots() throws {
+        let ctx = try TestSupport.makeContext()
+        let repo = TripRepository(context: ctx)
+        let a = PlanItem.poi(0, kind: .sight, time: "09:00", name: "A", subtype: "", note: "", stay: "")
+        let transitAB = PlanItem.transit(1, mode: .walk, desc: "A 到 B", minutes: 12, meters: 900)
+        let b = PlanItem.poi(2, kind: .food, time: "12:00", name: "B", subtype: "", note: "", stay: "")
+        let transitBC = PlanItem.transit(3, mode: .metro, desc: "B 到 C", minutes: 20, meters: 3500)
+        let c = PlanItem.poi(4, kind: .sight, time: "15:00", name: "C", subtype: "", note: "", stay: "")
+        let day = DayPlan(dayIndex: 0, items: [a, transitAB, b, transitBC, c])
+        try repo.create(city: "成都", days: [day])
+
+        try repo.reorderPOIs(day, orderedPOIIDs: [c.id, a.id, b.id])
+
+        let sorted = day.sortedItems
+        XCTAssertEqual(sorted.map(\.kind), [.sight, .transit, .sight, .transit, .food])
+        XCTAssertEqual(sorted.map(\.name), ["C", nil, "A", nil, "B"])
+        XCTAssertEqual(sorted.map(\.order), [0, 1, 2, 3, 4])
+        XCTAssertEqual(sorted[1].transitDesc, "A 到 B")
+        XCTAssertEqual(sorted[3].transitDesc, "B 到 C")
+    }
 }

@@ -70,4 +70,30 @@ public struct TripRepository {
         }
         try context.save()
     }
+
+    /// Reorder only POI rows while keeping existing transit rows in their current slots.
+    public func reorderPOIs(_ day: DayPlan, orderedPOIIDs ids: [UUID]) throws {
+        let sortedItems = day.sortedItems
+        let poiByID = Dictionary(uniqueKeysWithValues:
+            sortedItems.filter { $0.kind != .transit }.map { ($0.id, $0) })
+        var orderedPOIs = ids.compactMap { poiByID[$0] }
+        let knownIDs = Set(ids)
+        orderedPOIs.append(contentsOf: sortedItems.filter { $0.kind != .transit && !knownIDs.contains($0.id) })
+
+        var poiIndex = 0
+        var reordered: [PlanItem] = []
+        for item in sortedItems {
+            if item.kind == .transit {
+                reordered.append(item)
+            } else if poiIndex < orderedPOIs.count {
+                reordered.append(orderedPOIs[poiIndex])
+                poiIndex += 1
+            }
+        }
+
+        for (index, item) in reordered.enumerated() {
+            item.order = index
+        }
+        try context.save()
+    }
 }

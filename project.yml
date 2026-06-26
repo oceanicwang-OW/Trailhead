@@ -67,3 +67,28 @@ targets:
           else
             echo "warning: 未安装 SwiftLint，跳过代码规范检查（brew install swiftlint，详见 docs/CODE_STYLE.md）"
           fi
+
+  TrailheadTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: TrailheadTests
+    dependencies:
+      - target: Trailhead
+      - package: TrailheadCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.trailhead.TrailheadTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Trailhead.app/Contents/MacOS/Trailhead"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  Trailhead:
+    build:
+      targets:
+        Trailhead: all
+        TrailheadTests: [test]
+    test:
+      targets:
+        - TrailheadTests

@@ -2,6 +2,7 @@
 //  Center column of the macOS main screen (and the iOS trip page body):
 //  a day header, day-tabs, and the scrolling route timeline for the selected day.
 
+import SwiftData
 import SwiftUI
 import TrailheadCore
 
@@ -11,6 +12,10 @@ struct RouteTimelineView: View {
     @Binding var selectedItemID: UUID?
     var gutter: CGFloat = Metric.gutter
     var showDayTabs: Bool = true
+    @Environment(\.modelContext) private var modelContext
+    @State private var isEditing = false
+    @State private var draftPOIIDs: [UUID] = []
+    @State private var editError: String?
 
     private var day: DayPlan? {
         trip.sortedDays.first { $0.dayIndex == selectedDayIndex } ?? trip.sortedDays.first
@@ -27,6 +32,11 @@ struct RouteTimelineView: View {
         }
         .background(Palette.canvasBG)
         .scrollIndicators(.hidden)
+        .alert("保存失败", isPresented: editErrorPresented) {
+            Button("好", role: .cancel) { editError = nil }
+        } message: {
+            Text(editError ?? "请稍后重试")
+        }
     }
 
     private var header: some View {
@@ -56,43 +66,201 @@ struct RouteTimelineView: View {
             HStack(spacing: 8) {
                 ForEach(trip.sortedDays, id: \.id) { d in
                     let on = d.dayIndex == selectedDayIndex
-                    Text("D\(d.dayIndex + 1)")
-                        .font(.system(size: 13, weight: on ? .semibold : .medium))
-                        .foregroundStyle(on ? .white : Palette.textMuted)
-                        .frame(width: 46, height: 30)
-                        .background(on ? Palette.green : Palette.fieldBG,
-                                    in: RoundedRectangle(cornerRadius: 8))
-                        .onTapGesture { withAnimation(.snappy) { selectedDayIndex = d.dayIndex } }
+                    Button {
+                        selectDay(d.dayIndex)
+                    } label: {
+                        Text("D\(d.dayIndex + 1)")
+                            .font(.system(size: 13, weight: on ? .semibold : .medium))
+                            .foregroundStyle(on ? .white : Palette.textMuted)
+                            .frame(width: 46, height: 30)
+                            .background(on ? Palette.green : Palette.fieldBG,
+                                        in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
                 }
-                editButton
+                if isEditing {
+                    editControls
+                } else {
+                    editButton
+                }
             }
         }
     }
 
     private var editButton: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "pencil").font(.system(size: 11, weight: .semibold))
-            Text("编辑").font(.system(size: 12.5))
+        Button {
+            if let day { startEditing(day) }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "pencil").font(.system(size: 11, weight: .semibold))
+                Text("编辑").font(.system(size: 12.5))
+            }
+            .foregroundStyle(Palette.textMuted)
+            .frame(height: 30).padding(.horizontal, 12)
+            .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 8))
         }
-        .foregroundStyle(Palette.textMuted)
-        .frame(height: 30).padding(.horizontal, 12)
-        .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 8))
+        .buttonStyle(.plain)
     }
 
     private func timeline(for day: DayPlan) -> some View {
         VStack(spacing: 0) {
-            ForEach(day.sortedItems, id: \.id) { item in
+            ForEach(timelineItems(for: day), id: \.id) { item in
                 if item.kind == .transit {
                     TransportRow(item: item, gutter: gutter)
+                        .opacity(isEditing ? 0.72 : 1)
                 } else {
-                    POICard(item: item,
-                            selected: selectedItemID == item.id,
-                            gutter: gutter)
-                        .contentShape(Rectangle())
-                        .onTapGesture { selectedItemID = item.id }
+                    editablePOIRow(item, day: day)
                 }
             }
         }
         .padding(.top, 4)
+    }
+
+    private var editControls: some View {
+        HStack(spacing: 6) {
+            editControlButton(systemName: "xmark", tint: Palette.textMuted) {
+                cancelEditing()
+            }
+            .help("取消")
+
+            editControlButton(systemName: "checkmark", tint: .white, background: Palette.green) {
+                if let day { saveEditing(day) }
+            }
+            .help("保存")
+        }
+    }
+
+    private func editablePOIRow(_ item: PlanItem, day: DayPlan) -> some View {
+        POICard(item: item,
+                selected: selectedItemID == item.id,
+                gutter: gutter)
+            .contentShape(Rectangle())
+            .onTapGesture { selectedItemID = item.id }
+            .overlay(alignment: .topTrailing) {
+                if isEditing {
+                    moveControls(for: item, day: day)
+                        .padding(.top, 8)
+                        .padding(.trailing, 22)
+                }
+            }
+    }
+
+    private func moveControls(for item: PlanItem, day: DayPlan) -> some View {
+        let index = poiIndex(for: item, day: day)
+        return HStack(spacing: 4) {
+            moveButton(systemName: "chevron.up",
+                       disabled: index == nil || index == 0) {
+                movePOI(item.id, offset: -1, day: day)
+            }
+            .help("上移")
+
+            moveButton(systemName: "chevron.down",
+                       disabled: index == nil || index == poiIDs(for: day).count - 1) {
+                movePOI(item.id, offset: 1, day: day)
+            }
+            .help("下移")
+        }
+        .padding(4)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func editControlButton(systemName: String,
+                                   tint: Color,
+                                   background: Color = Palette.fieldBG,
+                                   action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 34, height: 30)
+                .background(background, in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func moveButton(systemName: String, disabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(disabled ? Palette.textMuted.opacity(0.35) : Palette.green)
+                .frame(width: 24, height: 24)
+                .background(Palette.canvasBG.opacity(0.82), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
+
+    private var editErrorPresented: Binding<Bool> {
+        Binding(
+            get: { editError != nil },
+            set: { if !$0 { editError = nil } }
+        )
+    }
+
+    private func selectDay(_ dayIndex: Int) {
+        if isEditing {
+            cancelEditing()
+        }
+        withAnimation(.snappy) {
+            selectedDayIndex = dayIndex
+        }
+    }
+
+    private func startEditing(_ day: DayPlan) {
+        draftPOIIDs = day.sortedItems.filter { $0.kind != .transit }.map(\.id)
+        isEditing = true
+    }
+
+    private func cancelEditing() {
+        isEditing = false
+        draftPOIIDs = []
+    }
+
+    private func saveEditing(_ day: DayPlan) {
+        do {
+            try TripRepository(context: modelContext).reorderPOIs(day, orderedPOIIDs: poiIDs(for: day))
+            cancelEditing()
+        } catch {
+            editError = error.localizedDescription
+        }
+    }
+
+    private func timelineItems(for day: DayPlan) -> [PlanItem] {
+        guard isEditing else { return day.sortedItems }
+        let sortedItems = day.sortedItems
+        let poiByID = Dictionary(uniqueKeysWithValues:
+            sortedItems.filter { $0.kind != .transit }.map { ($0.id, $0) })
+        var orderedPOIs = poiIDs(for: day).compactMap { poiByID[$0] }
+        let knownIDs = Set(orderedPOIs.map(\.id))
+        orderedPOIs.append(contentsOf: sortedItems.filter { $0.kind != .transit && !knownIDs.contains($0.id) })
+
+        var poiIndex = 0
+        return sortedItems.compactMap { item in
+            if item.kind == .transit {
+                return item
+            }
+            guard poiIndex < orderedPOIs.count else { return nil }
+            defer { poiIndex += 1 }
+            return orderedPOIs[poiIndex]
+        }
+    }
+
+    private func poiIDs(for day: DayPlan) -> [UUID] {
+        draftPOIIDs.isEmpty ? day.sortedItems.filter { $0.kind != .transit }.map(\.id) : draftPOIIDs
+    }
+
+    private func poiIndex(for item: PlanItem, day: DayPlan) -> Int? {
+        poiIDs(for: day).firstIndex(of: item.id)
+    }
+
+    private func movePOI(_ id: UUID, offset: Int, day: DayPlan) {
+        var ids = poiIDs(for: day)
+        guard let current = ids.firstIndex(of: id) else { return }
+        let target = current + offset
+        guard ids.indices.contains(target) else { return }
+        ids.swapAt(current, target)
+        withAnimation(.snappy) {
+            draftPOIIDs = ids
+        }
     }
 }

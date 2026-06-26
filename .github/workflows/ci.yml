@@ -38,6 +38,12 @@ jobs:
         run: xcodebuild test -scheme TrailheadCore -destination 'platform=macOS'
         working-directory: Packages/TrailheadCore
 
+      - name: Test Trailhead app (macOS)
+        run: >
+          xcodebuild test -project Trailhead.xcodeproj -scheme Trailhead
+          -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO
+
       - name: Build macOS
         run: >
           xcodebuild -project Trailhead.xcodeproj -scheme Trailhead
