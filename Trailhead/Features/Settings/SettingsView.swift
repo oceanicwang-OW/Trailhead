@@ -2,21 +2,44 @@
 //  FRAME 9/10 — grouped settings: API keys (Keychain-backed), monthly quota,
 //  cache. UI mirrors the mockup; values bind to KeychainStore + a usage counter.
 
+import SwiftData
 import SwiftUI
 import TrailheadCore
 
 struct SettingsView: View {
+    @Environment(\.modelContext) private var modelContext
     @StateObject private var keys = APIKeySettingsViewModel()
     @State private var amapToday = 0
     @State private var llmToday = 0
     /// 软性日预算（仅用于进度条参照；高德个人免费配额按接口分别计，非硬上限）。
     private let dailyBudget = 5000
-    @State private var offlineMaps = true
+
+    @AppStorage("offlineCacheEnabled") private var offlineCacheEnabled = true
+    @State private var tripCount = 0
+    @State private var cachedPOICount = 0
+    @State private var confirmClearCache = false
+    @State private var confirmClearAll = false
 
     private func reloadUsage() {
         let usage = UsageStore()
         amapToday = usage.count(.amap)
         llmToday = usage.count(.llm)
+    }
+
+    private func reloadStorage() {
+        tripCount = (try? modelContext.fetchCount(FetchDescriptor<Trip>())) ?? 0
+        cachedPOICount = (try? modelContext.fetchCount(FetchDescriptor<CachedPOI>())) ?? 0
+    }
+
+    private func clearCache() {
+        try? POICache(context: modelContext).clearAll()
+        reloadStorage()
+    }
+
+    private func clearAllData() {
+        try? POICache(context: modelContext).clearAll()
+        try? TripRepository(context: modelContext).deleteAll()
+        reloadStorage()
     }
 
     var body: some View {
@@ -69,24 +92,46 @@ struct SettingsView: View {
 
                 group("缓存与存储") {
                     HStack {
-                        Text("离线地图").font(Typo.body).foregroundStyle(Palette.textPrimary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("启用离线缓存").font(Typo.body).foregroundStyle(Palette.textPrimary)
+                            Text("同城重复生成命中本地、省高德配额").font(Typo.caption2).foregroundStyle(Palette.textSecondary)
+                        }
                         Spacer()
-                        Toggle("", isOn: $offlineMaps).labelsHidden().tint(Palette.green)
+                        Toggle("", isOn: $offlineCacheEnabled).labelsHidden().tint(Palette.green)
                     }.padding(.horizontal, 15).padding(.vertical, 8)
                     Divider().padding(.leading, 15)
-                    row("已缓存行程", trailing: "18 个行程 · 124 MB")
+                    row("已保存行程", trailing: "\(tripCount) 个")
                     Divider().padding(.leading, 15)
-                    HStack {
-                        Text("清除缓存").font(Typo.body).foregroundStyle(Palette.red)
-                        Spacer()
-                        Text("释放 124 MB").font(Typo.caption).foregroundStyle(Palette.textTertiary)
-                    }.padding(.horizontal, 15).padding(.vertical, 11)
+                    row("POI 缓存", trailing: "\(cachedPOICount) 条")
+                    Divider().padding(.leading, 15)
+                    destructiveRow("清除 POI 缓存", trailing: "\(cachedPOICount) 条") { confirmClearCache = true }
+                    Divider().padding(.leading, 15)
+                    destructiveRow("清除全部数据", trailing: "行程 + 缓存") { confirmClearAll = true }
                 }
             }
             .padding(26)
         }
         .background(Palette.groupedBG)
-        .onAppear { keys.load(); reloadUsage() }
+        .onAppear { keys.load(); reloadUsage(); reloadStorage() }
+        .alert("清除 POI 缓存？", isPresented: $confirmClearCache) {
+            Button("清除", role: .destructive) { clearCache() }
+            Button("取消", role: .cancel) {}
+        } message: { Text("仅清空本地 POI 缓存，行程不受影响；下次生成会重新联网召回。") }
+        .alert("清除全部数据？", isPresented: $confirmClearAll) {
+            Button("清除全部", role: .destructive) { clearAllData() }
+            Button("取消", role: .cancel) {}
+        } message: { Text("删除所有行程与缓存，不可恢复。") }
+    }
+
+    private func destructiveRow(_ title: String, trailing: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title).font(Typo.body).foregroundStyle(Palette.red)
+                Spacer()
+                Text(trailing).font(Typo.caption).foregroundStyle(Palette.textTertiary)
+            }.padding(.horizontal, 15).padding(.vertical, 11)
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain)
     }
 
     // helpers
