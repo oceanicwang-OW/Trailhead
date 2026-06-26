@@ -6,9 +6,18 @@
 import Foundation
 
 public enum SecretStore {
-    /// 本地机密文件（家目录下，不在仓库内）。
-    public static let defaultFileURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/trailhead/secrets.json")
+    /// 本地机密文件。macOS：~/.config/trailhead/secrets.json（仓库外）；
+    /// iOS：App 容器的 Application Support（沙盒内，通常走 Keychain/设置页而非此文件）。
+    public static let defaultFileURL: URL = {
+        #if os(macOS)
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/trailhead/secrets.json")
+        #else
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("trailhead/secrets.json")
+        #endif
+    }()
 
     public static func amapKey() -> String? {
         resolve(envVar: "TRAILHEAD_AMAP_KEY", fileKey: "amap", keychainAccount: KeychainStore.Account.amap)
