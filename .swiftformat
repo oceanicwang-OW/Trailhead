@@ -1,0 +1,21 @@
+# SwiftFormat — 行迹 Trailhead
+# 仅启用「安全、非结构性」规则，不破坏设计稿手工对齐与初始化器写法。
+# 用法：swiftformat .  （提交前）；CI 用 swiftformat . --lint。
+
+--swiftversion 5.9
+--exclude .build,DerivedData
+
+# 只跑下列规则（白名单），其余一律不动。
+# 刻意不启用 consecutiveSpaces / blankLinesAt*Scope / trailingCommas，
+# 以保留设计稿手工对齐的注释与种子数据写法。
+--rules \
+  sortImports, \
+  duplicateImports, \
+  trailingSpace, \
+  consecutiveBlankLines, \
+  emptyBraces, \
+  linebreakAtEndOfFile
+
+# 规则参数
+--trimwhitespace always
+--emptybraces no-space

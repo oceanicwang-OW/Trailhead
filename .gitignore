@@ -1,0 +1,40 @@
+# ── Xcode ──────────────────────────────────────────────────────────────────
+## 由 XcodeGen 从 project.yml 生成，不入库
+*.xcodeproj
+*.xcworkspace
+
+## Build / 派生数据
+build/
+DerivedData/
+.build/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+## 用户级 Xcode 状态
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+## SwiftPM
+.swiftpm/
+Package.resolved
+
+# ── macOS ──────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# ── 凭据 / 机密（API key 走 Keychain，绝不入库）─────────────────────────────
+*.xcconfig.local
+Secrets.swift
+.env
+
+# ── 工具缓存 ───────────────────────────────────────────────────────────────
+.swiftpm/xcode/
+fastlane/report.xml
+fastlane/Preview.html

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# 行迹 Trailhead — 提交前机密拦截
+# 启用：git config core.hooksPath .githooks（或 `make hooks`）
+# 作用：阻止把 API key / 密钥 / 凭据文件提交进库。机密一律走 Keychain。
+
+red() { printf "\033[31m%s\033[0m\n" "$1"; }
+fail=0
+
+# 1) 禁止提交的机密/凭据文件（与 .gitignore 双保险）
+blocked_files=$(git diff --cached --name-only --diff-filter=AM \
+  | grep -Ei '(^|/)(Secrets\.swift|\.env(\..*)?|.*\.xcconfig\.local|.*\.p12|.*\.mobileprovision|.*\.pem|.*\.key)$')
+if [ -n "$blocked_files" ]; then
+  red "✘ 拒绝提交：检测到机密/凭据文件，请勿入库（机密走 Keychain）："
+  echo "$blocked_files" | sed 's/^/    /'
+  fail=1
+fi
+
+# 2) 扫描暂存内容里疑似密钥值（只看新增行）。
+#    放行已知误报：kSec* Keychain 常量、account 名（amap_web_key / llm_api_key）。
+added=$(git diff --cached --diff-filter=AM -U0 | grep -E '^\+[^+]')
+suspect=$(printf '%s\n' "$added" \
+  | grep -Ein \
+      -e '-----BEGIN [A-Z ]*PRIVATE KEY' \
+      -e 'gh[pousr]_[A-Za-z0-9]{20,}' \
+      -e 'sk-[A-Za-z0-9]{16,}' \
+      -e 'AKIA[0-9A-Z]{16}' \
+      -e 'xox[baprs]-[A-Za-z0-9-]{10,}' \
+      -e '(api[_-]?key|secret|token|passwd|password|access[_-]?key)[":= '"'"']{1,4}[A-Za-z0-9_/+=-]{16,}' \
+  | grep -Eiv 'kSec|amap_web_key|llm_api_key|app\.trailhead\.keys')
+if [ -n "$suspect" ]; then
+  red "✘ 拒绝提交：暂存内容里出现疑似密钥/凭据（机密走 Keychain，勿硬编码）："
+  printf '%s\n' "$suspect" | sed 's/^/    /' | head -20
+  echo "    确为误报时可：git commit --no-verify（请谨慎）"
+  fail=1
+fi
+
+[ "$fail" -eq 0 ] || exit 1
+exit 0

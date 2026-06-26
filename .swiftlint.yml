@@ -1,0 +1,79 @@
+# SwiftLint — 行迹 Trailhead 代码规范
+# 文档：docs/CODE_STYLE.md ；构建期由 project.yml 的 SwiftLint 脚本阶段自动执行。
+
+included:
+  - Trailhead
+
+excluded:
+  - .build
+  - DerivedData
+  - "**/*.generated.swift"
+
+# 默认开启之外，额外打开的可选规则
+opt_in_rules:
+  - empty_count
+  - empty_string
+  - closure_spacing
+  - contains_over_first_not_nil
+  - first_where
+  - last_where
+  - sorted_first_last
+  - redundant_nil_coalescing
+  - vertical_whitespace_closing_braces
+  - explicit_init
+  - toggle_bool
+  - fatal_error_message
+  - prefer_self_type_over_type_of_self
+
+# 仅 `swiftlint analyze` 阶段运行
+analyzer_rules:
+  - unused_import
+
+disabled_rules:
+  - todo                 # PDR 任务以 TODO(...) 标注，属预期
+  - trailing_comma       # 多行字面量保留尾逗号，便于 diff
+  - colon                # 设计系统刻意对齐冒号（Theme.swift 调色板），保留可读性
+
+# PDR 定义的 API 形状：协议返回 (minutes, meters, cost) 等具名元组
+large_tuple:
+  warning: 3
+  error: 4
+
+function_parameter_count:
+  warning: 8
+  error: 10
+
+line_length:
+  warning: 140
+  error: 200
+  ignores_comments: true
+  ignores_urls: true
+
+type_body_length:
+  warning: 400
+  error: 600
+
+file_length:
+  warning: 500
+  error: 800
+
+function_body_length:
+  warning: 80
+  error: 140
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+
+# 允许设计系统里的短命名（hex / x / y / id / d1…）
+identifier_name:
+  min_length: 1
+  max_length:
+    warning: 50
+    error: 60
+  allowed_symbols: ["_"]
+
+nesting:
+  type_level: 3
+
+reporter: "xcode"
