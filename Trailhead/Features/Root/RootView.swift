@@ -28,7 +28,7 @@ struct RootView: View {
     init(container: ModelContainer) {
         _engine = StateObject(wrappedValue: ItineraryEngine(
             source: AmapClient(),
-            llm: DeepSeekClient(model: "deepseek-v4-pro"),
+            llm: DeepSeekClient(model: "deepseek-v4-pro", timeout: 180),  // v4-pro 推理较慢
             context: container.mainContext))
     }
 
