@@ -26,9 +26,11 @@ struct RootView: View {
     @State private var genTask: Task<Void, Never>?
 
     init(container: ModelContainer) {
+        // key 解析：环境变量 → ~/.config/trailhead/secrets.json → Keychain（不弹授权框）
         _engine = StateObject(wrappedValue: ItineraryEngine(
-            source: AmapClient(),
-            llm: DeepSeekClient(model: "deepseek-v4-pro", timeout: 180),  // v4-pro 推理较慢
+            source: AmapClient(keyProvider: { SecretStore.amapKey() }),
+            llm: DeepSeekClient(model: "deepseek-v4-pro", timeout: 180,   // v4-pro 推理较慢
+                                keyProvider: { SecretStore.deepseekKey() }),
             context: container.mainContext))
     }
 

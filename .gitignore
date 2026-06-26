@@ -29,9 +29,11 @@ Package.resolved
 .LSOverride
 Icon?
 
-# ── 凭据 / 机密（API key 走 Keychain，绝不入库）─────────────────────────────
+# ── 凭据 / 机密（走 ~/.config/trailhead/secrets.json 或 Keychain，绝不入库）──
 *.xcconfig.local
 Secrets.swift
+secrets.json
+*.secrets.json
 .env
 
 # ── 工具缓存 ───────────────────────────────────────────────────────────────
