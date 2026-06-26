@@ -24,6 +24,7 @@ struct RootView: View {
     @State private var genDays = 0
     @State private var genError: String?
     @State private var genTask: Task<Void, Never>?
+    @State private var quotaBanner = false
 
     init(container: ModelContainer) {
         // key 解析：环境变量 → ~/.config/trailhead/secrets.json → Keychain（不弹授权框）
@@ -33,10 +34,29 @@ struct RootView: View {
 
     var body: some View {
         content
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if quotaBanner { quotaBannerView }
+            }
             .sheet(isPresented: $generating) { generatingSheet }
             .alert("生成失败", isPresented: errorBinding, presenting: genError) { _ in
                 Button("好") { genError = nil; generating = false }
             } message: { Text($0) }
+            .onAppear { quotaBanner = QuotaState().isExhausted() }
+    }
+
+    /// 配额耗尽降级横幅（PDR T8.2 / §7 错误文案）。
+    private var quotaBannerView: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text("高德今日额度已用完，明日恢复；当前展示已缓存行程").font(Typo.caption)
+            Spacer()
+            Button { quotaBanner = false } label: { Image(systemName: "xmark") }
+                .buttonStyle(.plain)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(Palette.red)
     }
 
     @ViewBuilder private var content: some View {
@@ -137,13 +157,21 @@ struct RootView: View {
             do {
                 let trip = try await engine.generate(destination: destination, prefs: prefs, days: days)
                 guard !Task.isCancelled else { return }
+                QuotaState().clear()
+                quotaBanner = false
                 selection = trip
                 dayIndex = 0
                 selectedItemID = nil
                 generating = false
             } catch {
                 guard !Task.isCancelled else { return }
-                genError = Self.friendlyMessage(error)
+                generating = false
+                if case AmapError.quotaExceeded = error {
+                    QuotaState().markExhausted()      // 降级：标记 + 持久横幅，行程仍可浏览
+                    quotaBanner = true
+                } else {
+                    genError = Self.friendlyMessage(error)
+                }
             }
         }
     }

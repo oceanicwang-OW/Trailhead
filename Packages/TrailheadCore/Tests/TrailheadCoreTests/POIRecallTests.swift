@@ -14,8 +14,10 @@ private final class SpyPOISource: POIDataSource {
         ("000000", (0, 0))
     }
 
+    var failWithQuota = false
     func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate] {
         searchCalls.append((adcode, tags))
+        if failWithQuota { throw AmapError.quotaExceeded }
         return tags.flatMap { byCategory[$0] ?? [] }
     }
 
@@ -85,6 +87,20 @@ final class POIRecallTests: XCTestCase {
                                     now: day0.addingTimeInterval(8 * 24 * 60 * 60))
 
         XCTAssertEqual(spy.searchCalls.count, 2)
+    }
+
+    func testQuotaErrorStillServesCachedCandidates() async throws {
+        // PDR T8.2 降级：缓存有数据时，即便数据源配额耗尽也能返回缓存。
+        let cache = POICache(context: try TestSupport.makeContext())
+        try cache.store([candidate("F1")], adcode: "110100", category: "美食")
+
+        let spy = SpyPOISource()
+        spy.failWithQuota = true
+        let recall = POIRecall(source: spy, cache: cache)
+
+        let result = try await recall.recall(adcode: "110100", tags: ["美食"])
+        XCTAssertEqual(result.map(\.id), ["F1"])     // 命中缓存
+        XCTAssertEqual(spy.searchCalls.count, 0)     // 未触达数据源（不会抛配额错误）
     }
 
     func testDifferentCityDoesNotHitOtherCityCache() async throws {
