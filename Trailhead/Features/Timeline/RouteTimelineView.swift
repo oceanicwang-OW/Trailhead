@@ -16,6 +16,7 @@ struct RouteTimelineView: View {
     @State private var isEditing = false
     @State private var draftPOIIDs: [UUID] = []
     @State private var editError: String?
+    @State private var deletingItemID: UUID?
 
     private var day: DayPlan? {
         trip.sortedDays.first { $0.dayIndex == selectedDayIndex } ?? trip.sortedDays.first
@@ -159,6 +160,13 @@ struct RouteTimelineView: View {
                 movePOI(item.id, offset: 1, day: day)
             }
             .help("下移")
+
+            moveButton(systemName: deletingItemID == item.id ? "hourglass" : "trash",
+                       tint: .red,
+                       disabled: deletingItemID != nil) {
+                deletePOI(item, day: day)
+            }
+            .help("删除")
         }
         .padding(4)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -178,11 +186,14 @@ struct RouteTimelineView: View {
         .buttonStyle(.plain)
     }
 
-    private func moveButton(systemName: String, disabled: Bool, action: @escaping () -> Void) -> some View {
+    private func moveButton(systemName: String,
+                            tint: Color = Palette.green,
+                            disabled: Bool,
+                            action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(disabled ? Palette.textMuted.opacity(0.35) : Palette.green)
+                .foregroundStyle(disabled ? Palette.textMuted.opacity(0.35) : tint)
                 .frame(width: 24, height: 24)
                 .background(Palette.canvasBG.opacity(0.82), in: RoundedRectangle(cornerRadius: 6))
         }
@@ -261,6 +272,27 @@ struct RouteTimelineView: View {
         ids.swapAt(current, target)
         withAnimation(.snappy) {
             draftPOIIDs = ids
+        }
+    }
+
+    private func deletePOI(_ item: PlanItem, day: DayPlan) {
+        guard deletingItemID == nil else { return }
+        let currentIDs = poiIDs(for: day)
+        deletingItemID = item.id
+        Task { @MainActor in
+            do {
+                let repo = TripRepository(context: modelContext)
+                try repo.reorderPOIs(day, orderedPOIIDs: currentIDs)
+                try await repo.deletePOI(item, from: day, routeUsing: AmapClient())
+                draftPOIIDs = currentIDs.filter { $0 != item.id }
+                if selectedItemID == item.id {
+                    selectedItemID = draftPOIIDs.first
+                }
+                deletingItemID = nil
+            } catch {
+                editError = error.localizedDescription
+                deletingItemID = nil
+            }
         }
     }
 }

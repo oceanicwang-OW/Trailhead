@@ -96,4 +96,78 @@ public struct TripRepository {
         }
         try context.save()
     }
+
+    /// Delete one POI and rebuild transit rows between the remaining POIs.
+    public func deletePOI(_ item: PlanItem, from day: DayPlan, routeUsing source: POIDataSource) async throws {
+        guard item.kind != .transit else { return }
+        let remainingPOIs = day.sortedItems.filter { $0.kind != .transit && $0.id != item.id }
+
+        var transitBeforePOI: [UUID: PlanItem] = [:]
+        var previousCandidate: POICandidate?
+        for poi in remainingPOIs {
+            guard let candidate = poi.routeCandidate else {
+                previousCandidate = nil
+                continue
+            }
+            if let previousCandidate {
+                let mode = Self.mode(from: previousCandidate, to: candidate)
+                if let segment = try? await source.route(from: previousCandidate, to: candidate, mode: mode) {
+                    let transit = PlanItem(order: 0, kind: .transit)
+                    transit.transitMode = mode
+                    transit.transitDesc = mode.display
+                    transit.transitMinutes = segment.minutes
+                    transit.transitMeters = segment.meters
+                    transit.transitCost = segment.cost
+                    transitBeforePOI[poi.id] = transit
+                }
+            }
+            previousCandidate = candidate
+        }
+
+        for removed in day.items where removed.kind == .transit || removed.id == item.id {
+            context.delete(removed)
+        }
+
+        var rebuilt: [PlanItem] = []
+        var order = 0
+        for poi in remainingPOIs {
+            if let transit = transitBeforePOI[poi.id] {
+                transit.order = order
+                rebuilt.append(transit)
+                order += 1
+            }
+            poi.order = order
+            rebuilt.append(poi)
+            order += 1
+        }
+        day.items = rebuilt
+        try context.save()
+    }
+}
+
+private extension TripRepository {
+    static func mode(from: POICandidate, to: POICandidate) -> TransitMode {
+        haversineMeters(from, to) > 1500 ? .metro : .walk
+    }
+
+    static func haversineMeters(_ a: POICandidate, _ b: POICandidate) -> Double {
+        let radius = 6_371_000.0
+        let dLat = (b.lat - a.lat) * .pi / 180
+        let dLng = (b.lng - a.lng) * .pi / 180
+        let lat1 = a.lat * .pi / 180
+        let lat2 = b.lat * .pi / 180
+        let h = sin(dLat / 2) * sin(dLat / 2) + cos(lat1) * cos(lat2) * sin(dLng / 2) * sin(dLng / 2)
+        return 2 * radius * asin(min(1, sqrt(h)))
+    }
+}
+
+private extension PlanItem {
+    var routeCandidate: POICandidate? {
+        guard kind != .transit,
+              let poiId,
+              let name,
+              let lat,
+              let lng else { return nil }
+        return POICandidate(id: poiId, name: name, kind: kind, subtype: subtype ?? "", lat: lat, lng: lng)
+    }
 }

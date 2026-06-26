@@ -6,6 +6,24 @@ import SwiftData
 @testable import TrailheadCore
 import XCTest
 
+private final class RouteSpySource: POIDataSource {
+    private(set) var routeCalls: [(from: String, to: String, mode: TransitMode)] = []
+
+    func geocodeCity(_ name: String) async throws -> (adcode: String, center: (Double, Double)) {
+        ("000000", (0, 0))
+    }
+
+    func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate] {
+        []
+    }
+
+    func route(from: POICandidate, to: POICandidate,
+               mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
+        routeCalls.append((from.id, to.id, mode))
+        return (22, 2600, 12)
+    }
+}
+
 final class TripRepositoryTests: XCTestCase {
 
     func testCreateAndCount() throws {
@@ -128,5 +146,34 @@ final class TripRepositoryTests: XCTestCase {
         XCTAssertEqual(sorted.map(\.order), [0, 1, 2, 3, 4])
         XCTAssertEqual(sorted[1].transitDesc, "A 到 B")
         XCTAssertEqual(sorted[3].transitDesc, "B 到 C")
+    }
+
+    func testDeletePOIRebuildsTransitBetweenRemainingPOIs() async throws {
+        let ctx = try TestSupport.makeContext()
+        let repo = TripRepository(context: ctx)
+        let source = RouteSpySource()
+        let a = PlanItem.poi(0, kind: .sight, time: "09:00", name: "A", subtype: "景点", note: "", stay: "")
+        a.poiId = "A"; a.lat = 30.0; a.lng = 104.0
+        let transitAB = PlanItem.transit(1, mode: .walk, desc: "A 到 B", minutes: 12, meters: 900)
+        let b = PlanItem.poi(2, kind: .food, time: "12:00", name: "B", subtype: "餐厅", note: "", stay: "")
+        b.poiId = "B"; b.lat = 30.01; b.lng = 104.01
+        let transitBC = PlanItem.transit(3, mode: .metro, desc: "B 到 C", minutes: 20, meters: 3500)
+        let c = PlanItem.poi(4, kind: .sight, time: "15:00", name: "C", subtype: "景点", note: "", stay: "")
+        c.poiId = "C"; c.lat = 30.04; c.lng = 104.04
+        let day = DayPlan(dayIndex: 0, items: [a, transitAB, b, transitBC, c])
+        try repo.create(city: "成都", days: [day])
+
+        try await repo.deletePOI(b, from: day, routeUsing: source)
+
+        let sorted = day.sortedItems
+        XCTAssertEqual(sorted.map(\.kind), [.sight, .transit, .sight])
+        XCTAssertEqual(sorted.map(\.name), ["A", nil, "C"])
+        XCTAssertEqual(sorted.map(\.order), [0, 1, 2])
+        XCTAssertEqual(sorted[1].transitMode, .metro)
+        XCTAssertEqual(sorted[1].transitDesc, "地铁")
+        XCTAssertEqual(sorted[1].transitMinutes, 22)
+        XCTAssertEqual(sorted[1].transitMeters, 2600)
+        XCTAssertEqual(sorted[1].transitCost, 12)
+        XCTAssertEqual(source.routeCalls.map { "\($0.from)-\($0.to)" }, ["A-C"])
     }
 }
