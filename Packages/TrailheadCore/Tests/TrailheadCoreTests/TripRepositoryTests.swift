@@ -7,6 +7,7 @@ import SwiftData
 import XCTest
 
 private final class RouteSpySource: POIDataSource {
+    var failingPairs: Set<String> = []
     private(set) var routeCalls: [(from: String, to: String, mode: TransitMode)] = []
 
     func geocodeCity(_ name: String) async throws -> (adcode: String, center: (Double, Double)) {
@@ -20,6 +21,9 @@ private final class RouteSpySource: POIDataSource {
     func route(from: POICandidate, to: POICandidate,
                mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         routeCalls.append((from.id, to.id, mode))
+        if failingPairs.contains("\(from.id)-\(to.id)") {
+            throw URLError(.cannotConnectToHost)
+        }
         return (22, 2600, 12)
     }
 }
@@ -175,5 +179,62 @@ final class TripRepositoryTests: XCTestCase {
         XCTAssertEqual(sorted[1].transitMeters, 2600)
         XCTAssertEqual(sorted[1].transitCost, 12)
         XCTAssertEqual(source.routeCalls.map { "\($0.from)-\($0.to)" }, ["A-C"])
+    }
+
+    func testReplacePOIUpdatesTargetAndRebuildsTransit() async throws {
+        let ctx = try TestSupport.makeContext()
+        let repo = TripRepository(context: ctx)
+        let source = RouteSpySource()
+        let a = PlanItem.poi(0, kind: .sight, time: "09:00", name: "A", subtype: "景点", note: "", stay: "")
+        a.poiId = "A"; a.lat = 30.0; a.lng = 104.0
+        let transitAB = PlanItem.transit(1, mode: .walk, desc: "A 到 B", minutes: 12, meters: 900)
+        let b = PlanItem.poi(2, kind: .food, time: "12:00", name: "B", subtype: "餐厅", note: "old note", stay: "约 1 小时")
+        b.poiId = "B"; b.lat = 30.01; b.lng = 104.01
+        let originalID = b.id
+        let transitBC = PlanItem.transit(3, mode: .metro, desc: "B 到 C", minutes: 20, meters: 3500)
+        let c = PlanItem.poi(4, kind: .sight, time: "15:00", name: "C", subtype: "景点", note: "", stay: "")
+        c.poiId = "C"; c.lat = 30.04; c.lng = 104.04
+        let day = DayPlan(dayIndex: 0, items: [a, transitAB, b, transitBC, c])
+        try repo.create(city: "成都", days: [day])
+
+        let replacement = POICandidate(id: "X", name: "X Cafe", kind: .food, subtype: "咖啡", lat: 30.02, lng: 104.02)
+        try await repo.replacePOI(b, with: replacement, in: day, routeUsing: source)
+
+        let sorted = day.sortedItems
+        XCTAssertEqual(sorted.map(\.kind), [.sight, .transit, .food, .transit, .sight])
+        XCTAssertEqual(sorted.map(\.name), ["A", nil, "X Cafe", nil, "C"])
+        XCTAssertEqual(sorted.map(\.order), [0, 1, 2, 3, 4])
+        XCTAssertEqual(sorted[2].id, originalID)
+        XCTAssertEqual(sorted[2].poiId, "X")
+        XCTAssertEqual(sorted[2].subtype, "咖啡")
+        XCTAssertEqual(sorted[2].lat, 30.02)
+        XCTAssertEqual(sorted[2].lng, 104.02)
+        XCTAssertEqual(sorted[2].plannedTime, "12:00")
+        XCTAssertEqual(sorted[2].stayLabel, "约 1 小时")
+        XCTAssertEqual(sorted[2].note, "old note")
+        XCTAssertEqual(source.routeCalls.map { "\($0.from)-\($0.to)" }, ["A-X", "X-C"])
+    }
+
+    func testReplacePOISkipsFailedRouteSegmentAndStillSaves() async throws {
+        let ctx = try TestSupport.makeContext()
+        let repo = TripRepository(context: ctx)
+        let source = RouteSpySource()
+        source.failingPairs = ["A-X"]
+        let a = PlanItem.poi(0, kind: .sight, time: "09:00", name: "A", subtype: "景点", note: "", stay: "")
+        a.poiId = "A"; a.lat = 30.0; a.lng = 104.0
+        let b = PlanItem.poi(1, kind: .food, time: "12:00", name: "B", subtype: "餐厅", note: "", stay: "")
+        b.poiId = "B"; b.lat = 30.01; b.lng = 104.01
+        let c = PlanItem.poi(2, kind: .sight, time: "15:00", name: "C", subtype: "景点", note: "", stay: "")
+        c.poiId = "C"; c.lat = 30.04; c.lng = 104.04
+        let day = DayPlan(dayIndex: 0, items: [a, b, c])
+        try repo.create(city: "成都", days: [day])
+
+        let replacement = POICandidate(id: "X", name: "X Cafe", kind: .food, subtype: "咖啡", lat: 30.02, lng: 104.02)
+        try await repo.replacePOI(b, with: replacement, in: day, routeUsing: source)
+
+        let sorted = day.sortedItems
+        XCTAssertEqual(sorted.map(\.kind), [.sight, .food, .transit, .sight])
+        XCTAssertEqual(sorted.map(\.name), ["A", "X Cafe", nil, "C"])
+        XCTAssertEqual(source.routeCalls.map { "\($0.from)-\($0.to)" }, ["A-X", "X-C"])
     }
 }

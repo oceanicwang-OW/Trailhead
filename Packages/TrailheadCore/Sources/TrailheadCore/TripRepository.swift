@@ -101,10 +101,31 @@ public struct TripRepository {
     public func deletePOI(_ item: PlanItem, from day: DayPlan, routeUsing source: POIDataSource) async throws {
         guard item.kind != .transit else { return }
         let remainingPOIs = day.sortedItems.filter { $0.kind != .transit && $0.id != item.id }
+        context.delete(item)
+        try await rebuildDay(day, withPOIs: remainingPOIs, routeUsing: source)
+    }
 
+    /// Replace one POI and rebuild transit rows while preserving its schedule fields and position.
+    public func replacePOI(_ item: PlanItem, with candidate: POICandidate,
+                           in day: DayPlan, routeUsing source: POIDataSource) async throws {
+        guard item.kind != .transit else { return }
+        item.poiId = candidate.id
+        item.name = candidate.name
+        item.kind = candidate.kind
+        item.subtype = candidate.subtype
+        item.lat = candidate.lat
+        item.lng = candidate.lng
+        let orderedPOIs = day.sortedItems.filter { $0.kind != .transit }
+        try await rebuildDay(day, withPOIs: orderedPOIs, routeUsing: source)
+    }
+}
+
+private extension TripRepository {
+    func rebuildDay(_ day: DayPlan, withPOIs orderedPOIs: [PlanItem],
+                    routeUsing source: POIDataSource) async throws {
         var transitBeforePOI: [UUID: PlanItem] = [:]
         var previousCandidate: POICandidate?
-        for poi in remainingPOIs {
+        for poi in orderedPOIs {
             guard let candidate = poi.routeCandidate else {
                 previousCandidate = nil
                 continue
@@ -124,13 +145,13 @@ public struct TripRepository {
             previousCandidate = candidate
         }
 
-        for removed in day.items where removed.kind == .transit || removed.id == item.id {
+        for removed in day.items where removed.kind == .transit {
             context.delete(removed)
         }
 
         var rebuilt: [PlanItem] = []
         var order = 0
-        for poi in remainingPOIs {
+        for poi in orderedPOIs {
             if let transit = transitBeforePOI[poi.id] {
                 transit.order = order
                 rebuilt.append(transit)
@@ -143,9 +164,7 @@ public struct TripRepository {
         day.items = rebuilt
         try context.save()
     }
-}
 
-private extension TripRepository {
     static func mode(from: POICandidate, to: POICandidate) -> TransitMode {
         haversineMeters(from, to) > 1500 ? .metro : .walk
     }

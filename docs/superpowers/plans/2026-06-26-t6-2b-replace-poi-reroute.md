@@ -35,7 +35,7 @@
 - Modify: `Packages/TrailheadCore/Tests/TrailheadCoreTests/TripRepositoryTests.swift`
 - Modify: `Packages/TrailheadCore/Sources/TrailheadCore/TripRepository.swift`
 
-- [ ] **Step 1: Write the failing replacement test**
+- [x] **Step 1: Write the failing replacement test**
 
 Add this test to `TripRepositoryTests` after `testDeletePOIRebuildsTransitBetweenRemainingPOIs`:
 
@@ -75,7 +75,7 @@ func testReplacePOIUpdatesTargetAndRebuildsTransit() async throws {
 }
 ```
 
-- [ ] **Step 2: Run the focused Core test and confirm RED**
+- [x] **Step 2: Run the focused Core test and confirm RED**
 
 Run:
 
@@ -85,7 +85,7 @@ xcodebuild test -scheme TrailheadCore -destination 'platform=macOS' -only-testin
 
 Expected: FAIL because `TripRepository` has no `replacePOI`.
 
-- [ ] **Step 3: Implement shared rebuild and replace**
+- [x] **Step 3: Implement shared rebuild and replace**
 
 In `TripRepository.swift`:
 
@@ -161,7 +161,7 @@ private func rebuildDay(_ day: DayPlan, withPOIs orderedPOIs: [PlanItem],
 }
 ```
 
-- [ ] **Step 4: Run the focused test and confirm GREEN**
+- [x] **Step 4: Run the focused test and confirm GREEN**
 
 Run:
 
@@ -171,7 +171,7 @@ xcodebuild test -scheme TrailheadCore -destination 'platform=macOS' -only-testin
 
 Expected: PASS.
 
-- [ ] **Step 5: Run the existing delete test**
+- [x] **Step 5: Run the existing delete test**
 
 Run:
 
@@ -189,7 +189,7 @@ Expected: PASS. This guards the rebuild refactor.
 - Modify: `Packages/TrailheadCore/Tests/TrailheadCoreTests/TripRepositoryTests.swift`
 - Modify: `Packages/TrailheadCore/Sources/TrailheadCore/TripRepository.swift`
 
-- [ ] **Step 1: Extend `RouteSpySource` to simulate one failed route**
+- [x] **Step 1: Extend `RouteSpySource` to simulate one failed route**
 
 Change the spy to:
 
@@ -217,7 +217,7 @@ private final class RouteSpySource: POIDataSource {
 }
 ```
 
-- [ ] **Step 2: Add the failure-tolerance test**
+- [x] **Step 2: Add the failure-tolerance test**
 
 Add:
 
@@ -246,7 +246,7 @@ func testReplacePOISkipsFailedRouteSegmentAndStillSaves() async throws {
 }
 ```
 
-- [ ] **Step 3: Run the focused failure test**
+- [x] **Step 3: Run the focused failure test**
 
 Run:
 
@@ -263,7 +263,7 @@ Expected: PASS. The implementation from Task 1 already uses `try?` around indivi
 **Files:**
 - Modify: `Trailhead/Features/Timeline/RouteTimelineView.swift`
 
-- [ ] **Step 1: Add UI state**
+- [x] **Step 1: Add UI state**
 
 Add state near the existing edit state:
 
@@ -275,7 +275,7 @@ Add state near the existing edit state:
 @State private var applyingReplacementItemID: UUID?
 ```
 
-- [ ] **Step 2: Present the candidate sheet**
+- [x] **Step 2: Present the candidate sheet**
 
 Attach to the root `ScrollView` chain:
 
@@ -285,7 +285,7 @@ Attach to the root `ScrollView` chain:
 }
 ```
 
-- [ ] **Step 3: Add the replace button to row controls**
+- [x] **Step 3: Add the replace button to row controls**
 
 In `moveControls(for:day:)`, insert before the trash button:
 
@@ -298,7 +298,7 @@ moveButton(systemName: applyingReplacementItemID == item.id ? "hourglass" : "arr
 .help("替换")
 ```
 
-- [ ] **Step 4: Add candidate sheet helpers**
+- [x] **Step 4: Add candidate sheet helpers**
 
 Add private helpers inside `RouteTimelineView`:
 
@@ -375,7 +375,7 @@ private func candidateMetadata(_ candidate: POICandidate) -> String {
 }
 ```
 
-- [ ] **Step 5: Add candidate loading and apply helpers**
+- [x] **Step 5: Add candidate loading and apply helpers**
 
 Add:
 
@@ -444,7 +444,7 @@ private func applyReplacement(_ candidate: POICandidate, for item: PlanItem, day
 }
 ```
 
-- [ ] **Step 6: Build macOS app**
+- [x] **Step 6: Build macOS app**
 
 Run:
 
@@ -462,13 +462,13 @@ Expected: PASS.
 - Modify: `README.md`
 - Modify: `PDR-行迹.md`
 
-- [ ] **Step 1: Update progress text**
+- [x] **Step 1: Update progress text**
 
 Update README milestone row and next-step text so T6.2b is marked complete and T6.3 is next.
 
 Update PDR T6.2 rows/status notes so deletion and replacement are complete.
 
-- [ ] **Step 2: Run full verification**
+- [x] **Step 2: Run full verification**
 
 Run:
 
@@ -510,7 +510,7 @@ make lint
 
 Expected: PASS with 0 violations.
 
-- [ ] **Step 3: Commit implementation**
+- [x] **Step 3: Commit implementation**
 
 Run:
 

@@ -17,6 +17,11 @@ struct RouteTimelineView: View {
     @State private var draftPOIIDs: [UUID] = []
     @State private var editError: String?
     @State private var deletingItemID: UUID?
+    @State private var replacingItem: PlanItem?
+    @State private var replacementCandidates: [POICandidate] = []
+    @State private var replacementLoading = false
+    @State private var replacementError: String?
+    @State private var applyingReplacementItemID: UUID?
 
     private var day: DayPlan? {
         trip.sortedDays.first { $0.dayIndex == selectedDayIndex } ?? trip.sortedDays.first
@@ -37,6 +42,11 @@ struct RouteTimelineView: View {
             Button("好", role: .cancel) { editError = nil }
         } message: {
             Text(editError ?? "请稍后重试")
+        }
+        .sheet(isPresented: replacementPresented) {
+            if let replacingItem {
+                replacementSheet(for: replacingItem)
+            }
         }
     }
 
@@ -161,9 +171,16 @@ struct RouteTimelineView: View {
             }
             .help("下移")
 
+            moveButton(systemName: applyingReplacementItemID == item.id ? "hourglass" : "arrow.triangle.2.circlepath",
+                       tint: Palette.green,
+                       disabled: deletingItemID != nil || applyingReplacementItemID != nil) {
+                openReplacement(for: item, day: day)
+            }
+            .help("替换")
+
             moveButton(systemName: deletingItemID == item.id ? "hourglass" : "trash",
                        tint: .red,
-                       disabled: deletingItemID != nil) {
+                       disabled: deletingItemID != nil || applyingReplacementItemID != nil) {
                 deletePOI(item, day: day)
             }
             .help("删除")
@@ -206,6 +223,26 @@ struct RouteTimelineView: View {
             get: { editError != nil },
             set: { if !$0 { editError = nil } }
         )
+    }
+
+    private var replacementPresented: Binding<Bool> {
+        Binding(
+            get: { replacingItem != nil },
+            set: { if !$0 { replacingItem = nil } }
+        )
+    }
+
+    private func replacementSheet(for item: PlanItem) -> some View {
+        ReplacementCandidateSheet(candidates: replacementCandidates,
+                                  loading: replacementLoading,
+                                  error: replacementError,
+                                  applyingReplacementItemID: applyingReplacementItemID) {
+            replacingItem = nil
+        } onRetry: {
+            if let day { loadReplacementCandidates(for: item, day: day) }
+        } onApply: { candidate in
+            if let day { applyReplacement(candidate, for: item, day: day) }
+        }
     }
 
     private func selectDay(_ dayIndex: Int) {
@@ -275,6 +312,70 @@ struct RouteTimelineView: View {
         }
     }
 
+    private func openReplacement(for item: PlanItem, day: DayPlan) {
+        replacingItem = item
+        loadReplacementCandidates(for: item, day: day)
+    }
+
+    private func loadReplacementCandidates(for item: PlanItem, day: DayPlan) {
+        replacementLoading = true
+        replacementError = nil
+        replacementCandidates = []
+        Task { @MainActor in
+            do {
+                let adcode = trip.adcode.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !adcode.isEmpty else {
+                    replacementError = "当前行程缺少城市编码，无法召回候选"
+                    replacementLoading = false
+                    return
+                }
+                let recall = POIRecall(source: AmapClient(), cache: POICache(context: modelContext))
+                let existingPOIIDs = Set(day.sortedItems.compactMap(\.poiId))
+                let tags = replacementTags(for: item)
+                replacementCandidates = try await recall.recall(adcode: adcode, tags: tags)
+                    .filter { !existingPOIIDs.contains($0.id) }
+                replacementLoading = false
+            } catch {
+                replacementError = error.localizedDescription
+                replacementLoading = false
+            }
+        }
+    }
+
+    private func replacementTags(for item: PlanItem) -> [String] {
+        switch item.kind {
+        case .sight:
+            if let subtype = item.subtype, !subtype.isEmpty { return [subtype] }
+            return ["景点"]
+        case .food:
+            return ["美食"]
+        case .lodging:
+            return ["住宿"]
+        case .transit:
+            return ["景点"]
+        }
+    }
+
+    private func applyReplacement(_ candidate: POICandidate, for item: PlanItem, day: DayPlan) {
+        guard applyingReplacementItemID == nil else { return }
+        let currentIDs = poiIDs(for: day)
+        applyingReplacementItemID = item.id
+        Task { @MainActor in
+            do {
+                let repo = TripRepository(context: modelContext)
+                try repo.reorderPOIs(day, orderedPOIIDs: currentIDs)
+                try await repo.replacePOI(item, with: candidate, in: day, routeUsing: AmapClient())
+                draftPOIIDs = currentIDs
+                selectedItemID = item.id
+                replacingItem = nil
+                applyingReplacementItemID = nil
+            } catch {
+                editError = error.localizedDescription
+                applyingReplacementItemID = nil
+            }
+        }
+    }
+
     private func deletePOI(_ item: PlanItem, day: DayPlan) {
         guard deletingItemID == nil else { return }
         let currentIDs = poiIDs(for: day)
@@ -294,5 +395,82 @@ struct RouteTimelineView: View {
                 deletingItemID = nil
             }
         }
+    }
+}
+
+private struct ReplacementCandidateSheet: View {
+    let candidates: [POICandidate]
+    let loading: Bool
+    let error: String?
+    let applyingReplacementItemID: UUID?
+    let onClose: () -> Void
+    let onRetry: () -> Void
+    let onApply: (POICandidate) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("替换地点")
+                    .font(Typo.display(18, .bold))
+                    .foregroundStyle(Palette.textPrimary)
+                Spacer()
+                Button("关闭", action: onClose)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Palette.textMuted)
+            }
+
+            if loading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, minHeight: 180)
+            } else if let error {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(error)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.red)
+                    Button("重试", action: onRetry)
+                        .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if candidates.isEmpty {
+                Text("没有可替换的候选")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Palette.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 180)
+            } else {
+                List(candidates) { candidate in
+                    Button {
+                        onApply(candidate)
+                    } label: {
+                        candidateRow(candidate)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(applyingReplacementItemID != nil)
+                }
+                .listStyle(.plain)
+                .frame(minHeight: 240)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 360, idealWidth: 420, minHeight: 300)
+    }
+
+    private func candidateRow(_ candidate: POICandidate) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(candidate.name)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Palette.textPrimary)
+            Text(candidateMetadata(candidate))
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.textSecondary)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func candidateMetadata(_ candidate: POICandidate) -> String {
+        var parts = [candidate.subtype.isEmpty ? candidate.kind.label : candidate.subtype]
+        if let rating = candidate.rating { parts.append(String(format: "%.1f 分", rating)) }
+        if let avgPrice = candidate.avgPrice { parts.append("¥\(avgPrice)") }
+        if let openHours = candidate.openHours, !openHours.isEmpty { parts.append(openHours) }
+        return parts.joined(separator: " · ")
     }
 }
