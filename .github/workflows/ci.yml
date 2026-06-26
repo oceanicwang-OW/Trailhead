@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Lint & Build (macOS + iOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install tools
+        run: brew install xcodegen swiftlint swiftformat
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: SwiftLint
+        run: swiftlint lint --strict --config .swiftlint.yml
+
+      - name: SwiftFormat (lint)
+        run: swiftformat . --lint
+
+      - name: Build macOS
+        run: >
+          xcodebuild -project Trailhead.xcodeproj -scheme Trailhead
+          -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO build
+
+      - name: Build iOS Simulator
+        run: >
+          xcodebuild -project Trailhead.xcodeproj -scheme Trailhead
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO build
