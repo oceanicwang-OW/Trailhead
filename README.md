@@ -101,11 +101,11 @@ Trailhead/
 | 2 API 客户端 | T2.1 geocode · T2.2 searchPOI · T2.3 route · T2.4 错误 · T2.5 缓存优先召回 · T2.6 DeepSeek | ✅ |
 | 3 生成引擎 | T3.1 LLMProvider · T3.2 Prompt · T3.3 解析重试 · T3.4 FactChecker · T3.5 路线补全 · T3.6 generate 串联 · T3.7 进度 | ✅ |
 | 4–5 UI | 导航骨架 / 路线时间线 / 新建 / 生成中 / 地图（设计还原） | ✅ UI |
+| 引擎接线 | NewTrip→`engine.generate()`、GeneratingView 订阅 stage/progress、注入真实 client、错误提示 | ✅ |
 | 6 编辑重排 | T6.* 拖动/删除/替换 | ⬜ |
-| 7 设置 | T7.* API/用量/缓存（UI 已还原，用量统计待接） | 🟡 |
+| 7 设置 | T7.* API/用量/缓存（UI 已还原，key 写入待接 / 用量统计待接） | 🟡 |
 | 8 打磨 | 空态✅ / 离线降级 / 回归 | 🟡 |
 
-下一步：**接线到 UI**——把 `NewTripView` 提交接到 `ItineraryEngine.generate()`、`GeneratingView`
-订阅 `engine.stage/progress`（注入真实 `AmapClient`/`DeepSeekClient`）；再做 T6 编辑/重排、
-T7.2 用量统计、T8 离线降级。真实联调需高德 Web 服务 key + LLM key（设置页填入，走 Keychain）。
-详见 [`PDR-行迹.md`](PDR-行迹.md) §11–§12。
+引擎已接进 UI：`RootView` 持有 `ItineraryEngine`，「生成行程」→ 生成中（真实分步进度）→ 选中新行程；
+无 key / 配额 / 无候选等错误有明确文案。**剩下到 M2 可用**：T7.1 把两把 key 写进 Keychain（设置页），
+即可真实生成；再做 T6 编辑重排、T7.2 用量、T8 离线降级。详见 [`PDR-行迹.md`](PDR-行迹.md) §11–§12。

@@ -7,7 +7,7 @@ import TrailheadCore
 
 struct NewTripView: View {
     @Environment(\.dismiss) private var dismiss
-    var onGenerate: (TripPrefs, String) -> Void = { _, _ in }
+    var onGenerate: (TripPrefs, String, Int) -> Void = { _, _, _ in }
 
     @State private var destination = "关西，日本"
     @State private var days = 5
@@ -60,7 +60,7 @@ struct NewTripView: View {
     private var footer: some View {
         Button {
             var p = TripPrefs(); p.tags = Array(selectedTags); p.pace = pace; p.budgetPerDay = Int(budget)
-            onGenerate(p, destination); dismiss()
+            onGenerate(p, destination, days); dismiss()
         } label: {
             Text("生成行程")
                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)

@@ -21,7 +21,7 @@ struct TrailheadApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            RootView(container: container)
         }
         .modelContainer(container)
         #if os(macOS)
