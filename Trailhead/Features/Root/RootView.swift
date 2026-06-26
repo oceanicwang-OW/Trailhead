@@ -67,7 +67,8 @@ struct RootView: View {
         #endif
     }
 
-    private var current: Trip? { selection ?? trips.first }
+    /// 默认选中第一个有内容的行程（避免开屏停在空草稿上）。
+    private var current: Trip? { selection ?? trips.first { !$0.days.isEmpty } ?? trips.first }
 
     // MARK: macOS — three columns
 
