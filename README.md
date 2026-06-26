@@ -105,7 +105,7 @@ Trailhead/
 | 引擎接线 | NewTrip→`engine.generate()`、GeneratingView 订阅 stage/progress、注入真实 client、错误提示 | ✅ |
 | 6 编辑重排 | T6.1 POI 重排已接 / T6.2 删除与替换并重算已接 / T6.3 单日重生成已接 | ✅ |
 | 7 设置 | T7.1 key 写入 ✅ / T7.2 用量统计 ✅ / T7.3 清除缓存 + 清除全部数据 ✅ | ✅ |
-| 8 打磨 | T8.1 空态✅ / T8.2 配额降级横幅✅ / T8.3 离线可读 / T8.4 回归 | 🟡 |
+| 8 打磨 | T8.1 空态✅ / T8.2 配额降级横幅✅ / T8.3 离线可读✅ / T8.4 双端回归 | 🟡 |
 
 引擎已接进 UI：`RootView` 持有 `ItineraryEngine`，「生成行程」→ 生成中（真实分步进度）→ 选中新行程；
 无 key / 配额 / 无候选等错误有明确文案。设置页已可把高德 Web 服务 Key 与 DeepSeek Key 写入 Keychain；
