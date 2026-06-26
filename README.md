@@ -41,12 +41,15 @@ Trailhead/
 │  │  ├─ CachedPOI.swift           POI 缓存实体                            [T1.2]
 │  │  ├─ POICache.swift            (adcode,category) 缓存 + TTL            [T1.2]
 │  │  ├─ TripRepository.swift      Trip CRUD + 重排                        [T1.4]
-│  │  ├─ Services.swift            Keychain + POIDataSource/LLMProvider 协议 + Engine 骨架
+│  │  ├─ Services.swift            Keychain + POIDataSource/LLMProvider 协议 + 桩
 │  │  ├─ AmapClient.swift          高德 Web 服务（geocode/POI/route + 错误） [T2.1–2.4]
 │  │  ├─ POIRecall.swift           缓存优先 POI 召回                        [T2.5]
 │  │  ├─ DeepSeekClient.swift      LLM 补全（重试 + jsonMode）             [T2.6]
-│  │  └─ PromptBuilder.swift       行程编排 prompt（候选+偏好+schema）      [T3.2]
-│  └─ Tests/TrailheadCoreTests/    hostless 单测（XCTest，macOS 秒级，40 个）[T1 T2]
+│  │  ├─ PromptBuilder.swift       行程编排 prompt（候选+偏好+schema）      [T3.2]
+│  │  ├─ ItineraryPlan.swift       LLM 输出结构 + 解析（围栏容错/重试）     [T3.3]
+│  │  ├─ FactChecker.swift         剔除非候选 poi_id、候选字段为准回填       [T3.4]
+│  │  └─ ItineraryEngine.swift     七步流水线 generate() + 进度            [T3.5–3.7]
+│  └─ Tests/TrailheadCoreTests/    hostless 单测（XCTest，macOS 秒级，55 个）[T1 T2 T3]
 └─ Trailhead/                      App 源码（XcodeGen sources 根；依赖 TrailheadCore）
    ├─ App/                         @main 入口 + SwiftData 容器 + 首启动播种     [T0.1 T0.3]
    ├─ DesignSystem/                颜色/字体/间距 token + ItemKind→色映射       [设计系统]
@@ -88,17 +91,21 @@ Trailhead/
 
 ## 进度
 
-> 单测：**40 个全过**（`make test`，hostless macOS）；CI 双端 build + lint 绿。
+> 单测：**55 个全过**（`make test`，hostless macOS）；CI 双端 build + lint 绿。
+> **M1 数据闭环达成**：端到端「输入偏好 → 库里出现完整可信行程」已通过（mock 注入）。
 
 | 阶段 | 任务 | 状态 |
 |---|---|---|
 | 0 脚手架 | T0.1 工程 / T0.2 分层 / T0.3 容器 | ✅ |
 | 1 数据/凭据 | T1.1 模型 · T1.2 CachedPOI+TTL · T1.3 Keychain · T1.4 Repository | ✅ |
 | 2 API 客户端 | T2.1 geocode · T2.2 searchPOI · T2.3 route · T2.4 错误 · T2.5 缓存优先召回 · T2.6 DeepSeek | ✅ |
-| 3 生成引擎 | T3.1 LLMProvider · **T3.2 Prompt（已起步）** · T3.3 解析重试 · T3.4 FactChecker · T3.5 路线补全 · T3.6 generate 串联 · T3.7 进度 | 🟡 进行中 |
+| 3 生成引擎 | T3.1 LLMProvider · T3.2 Prompt · T3.3 解析重试 · T3.4 FactChecker · T3.5 路线补全 · T3.6 generate 串联 · T3.7 进度 | ✅ |
 | 4–5 UI | 导航骨架 / 路线时间线 / 新建 / 生成中 / 地图（设计还原） | ✅ UI |
 | 6 编辑重排 | T6.* 拖动/删除/替换 | ⬜ |
 | 7 设置 | T7.* API/用量/缓存（UI 已还原，用量统计待接） | 🟡 |
 | 8 打磨 | 空态✅ / 离线降级 / 回归 | 🟡 |
 
-下一步：**T3 引擎流水线**——`AmapClient`/`DeepSeekClient` 已就绪可注入，把 `geocode → 召回 → LLM 编排 → FactChecker → 路线补全 → 落库` 串起来（可用 mock `LLMProvider` 端到端测）。真实联调需高德 Web 服务 key + LLM key（填入设置页，走 Keychain）。详见 [`PDR-行迹.md`](PDR-行迹.md) §11–§12。
+下一步：**接线到 UI**——把 `NewTripView` 提交接到 `ItineraryEngine.generate()`、`GeneratingView`
+订阅 `engine.stage/progress`（注入真实 `AmapClient`/`DeepSeekClient`）；再做 T6 编辑/重排、
+T7.2 用量统计、T8 离线降级。真实联调需高德 Web 服务 key + LLM key（设置页填入，走 Keychain）。
+详见 [`PDR-行迹.md`](PDR-行迹.md) §11–§12。

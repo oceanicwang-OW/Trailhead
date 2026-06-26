@@ -112,26 +112,3 @@ public struct StubLLMProvider: LLMProvider {
         Data("{\"days\":[]}".utf8)
     }
 }
-
-// MARK: - Itinerary engine (PDR T3.6 skeleton)
-
-@MainActor
-public final class ItineraryEngine: ObservableObject {
-    public enum Stage: String, Sendable { case analyzing, routing, transit, dining, budgeting, done }
-    @Published public var stage: Stage = .analyzing
-    @Published public var progress: Double = 0
-
-    private let poi: POIDataSource
-    private let llm: LLMProvider
-    public init(poi: POIDataSource = StubPOISource(), llm: LLMProvider = StubLLMProvider()) {
-        self.poi = poi; self.llm = llm
-    }
-
-    /// Pipeline outline (PDR §3): geocode → recall POIs → LLM plan (poi_id-locked)
-    /// → route fill → FactChecker → persist. Implemented in phase 3.
-    public func generate(prefs: TripPrefs, destination: String) async throws -> Trip {
-        // TODO(PDR T3.2–T3.6): wire the real pipeline.
-        throw EngineError.notImplemented
-    }
-    public enum EngineError: Error { case notImplemented }
-}
