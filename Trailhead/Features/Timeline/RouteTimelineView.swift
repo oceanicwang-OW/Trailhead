@@ -22,6 +22,7 @@ struct RouteTimelineView: View {
     @State private var replacementLoading = false
     @State private var replacementError: String?
     @State private var applyingReplacementItemID: UUID?
+    @State private var regeneratingDayID: UUID?
 
     private var day: DayPlan? {
         trip.sortedDays.first { $0.dayIndex == selectedDayIndex } ?? trip.sortedDays.first
@@ -59,6 +60,10 @@ struct RouteTimelineView: View {
                 Text(daySubtitle)
                     .font(.system(size: 13))
                     .foregroundStyle(Palette.textSecondary)
+                Spacer()
+                if let day {
+                    regenerateDayButton(day)
+                }
             }
         }
         .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 10)
@@ -111,6 +116,31 @@ struct RouteTimelineView: View {
             .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .disabled(regeneratingDayID != nil)
+    }
+
+    private func regenerateDayButton(_ day: DayPlan) -> some View {
+        let isRegenerating = regeneratingDayID == day.id
+        return Button {
+            regenerateDay(day)
+        } label: {
+            Group {
+                if isRegenerating {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .bold))
+                }
+            }
+            .frame(width: 30, height: 30)
+            .foregroundStyle(Palette.green)
+            .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .disabled(isEditing || deletingItemID != nil || applyingReplacementItemID != nil || regeneratingDayID != nil)
+        .help("重生成当天")
+        .accessibilityLabel("重生成当天")
     }
 
     private func timeline(for day: DayPlan) -> some View {
@@ -139,6 +169,7 @@ struct RouteTimelineView: View {
             }
             .help("保存")
         }
+        .disabled(regeneratingDayID != nil)
     }
 
     private func editablePOIRow(_ item: PlanItem, day: DayPlan) -> some View {
@@ -173,14 +204,18 @@ struct RouteTimelineView: View {
 
             moveButton(systemName: applyingReplacementItemID == item.id ? "hourglass" : "arrow.triangle.2.circlepath",
                        tint: Palette.green,
-                       disabled: deletingItemID != nil || applyingReplacementItemID != nil) {
+                       disabled: deletingItemID != nil
+                           || applyingReplacementItemID != nil
+                           || regeneratingDayID != nil) {
                 openReplacement(for: item, day: day)
             }
             .help("替换")
 
             moveButton(systemName: deletingItemID == item.id ? "hourglass" : "trash",
                        tint: .red,
-                       disabled: deletingItemID != nil || applyingReplacementItemID != nil) {
+                       disabled: deletingItemID != nil
+                           || applyingReplacementItemID != nil
+                           || regeneratingDayID != nil) {
                 deletePOI(item, day: day)
             }
             .help("删除")
@@ -255,6 +290,7 @@ struct RouteTimelineView: View {
     }
 
     private func startEditing(_ day: DayPlan) {
+        guard regeneratingDayID == nil else { return }
         draftPOIIDs = day.sortedItems.filter { $0.kind != .transit }.map(\.id)
         isEditing = true
     }
@@ -265,6 +301,7 @@ struct RouteTimelineView: View {
     }
 
     private func saveEditing(_ day: DayPlan) {
+        guard regeneratingDayID == nil else { return }
         do {
             try TripRepository(context: modelContext).reorderPOIs(day, orderedPOIIDs: poiIDs(for: day))
             cancelEditing()
@@ -313,6 +350,7 @@ struct RouteTimelineView: View {
     }
 
     private func openReplacement(for item: PlanItem, day: DayPlan) {
+        guard regeneratingDayID == nil else { return }
         replacingItem = item
         loadReplacementCandidates(for: item, day: day)
     }
@@ -341,7 +379,9 @@ struct RouteTimelineView: View {
             }
         }
     }
+}
 
+private extension RouteTimelineView {
     private func replacementTags(for item: PlanItem) -> [String] {
         switch item.kind {
         case .sight:
@@ -357,7 +397,7 @@ struct RouteTimelineView: View {
     }
 
     private func applyReplacement(_ candidate: POICandidate, for item: PlanItem, day: DayPlan) {
-        guard applyingReplacementItemID == nil else { return }
+        guard applyingReplacementItemID == nil, regeneratingDayID == nil else { return }
         let currentIDs = poiIDs(for: day)
         applyingReplacementItemID = item.id
         Task { @MainActor in
@@ -377,7 +417,7 @@ struct RouteTimelineView: View {
     }
 
     private func deletePOI(_ item: PlanItem, day: DayPlan) {
-        guard deletingItemID == nil else { return }
+        guard deletingItemID == nil, regeneratingDayID == nil else { return }
         let currentIDs = poiIDs(for: day)
         deletingItemID = item.id
         Task { @MainActor in
@@ -396,81 +436,23 @@ struct RouteTimelineView: View {
             }
         }
     }
-}
 
-private struct ReplacementCandidateSheet: View {
-    let candidates: [POICandidate]
-    let loading: Bool
-    let error: String?
-    let applyingReplacementItemID: UUID?
-    let onClose: () -> Void
-    let onRetry: () -> Void
-    let onApply: (POICandidate) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("替换地点")
-                    .font(Typo.display(18, .bold))
-                    .foregroundStyle(Palette.textPrimary)
-                Spacer()
-                Button("关闭", action: onClose)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Palette.textMuted)
-            }
-
-            if loading {
-                ProgressView()
-                    .frame(maxWidth: .infinity, minHeight: 180)
-            } else if let error {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(error)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.red)
-                    Button("重试", action: onRetry)
-                        .buttonStyle(.bordered)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else if candidates.isEmpty {
-                Text("没有可替换的候选")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Palette.textSecondary)
-                    .frame(maxWidth: .infinity, minHeight: 180)
-            } else {
-                List(candidates) { candidate in
-                    Button {
-                        onApply(candidate)
-                    } label: {
-                        candidateRow(candidate)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(applyingReplacementItemID != nil)
-                }
-                .listStyle(.plain)
-                .frame(minHeight: 240)
+    private func regenerateDay(_ day: DayPlan) {
+        guard regeneratingDayID == nil else { return }
+        cancelEditing()
+        replacingItem = nil
+        regeneratingDayID = day.id
+        Task { @MainActor in
+            do {
+                try await TripRepository(context: modelContext).regenerateDay(day, in: trip,
+                                                                              source: AmapClient(),
+                                                                              llm: DeepSeekClient())
+                selectedItemID = day.sortedItems.first { $0.kind != .transit }?.id
+                regeneratingDayID = nil
+            } catch {
+                editError = error.localizedDescription
+                regeneratingDayID = nil
             }
         }
-        .padding(18)
-        .frame(minWidth: 360, idealWidth: 420, minHeight: 300)
-    }
-
-    private func candidateRow(_ candidate: POICandidate) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(candidate.name)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Palette.textPrimary)
-            Text(candidateMetadata(candidate))
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.textSecondary)
-        }
-        .padding(.vertical, 6)
-    }
-
-    private func candidateMetadata(_ candidate: POICandidate) -> String {
-        var parts = [candidate.subtype.isEmpty ? candidate.kind.label : candidate.subtype]
-        if let rating = candidate.rating { parts.append(String(format: "%.1f 分", rating)) }
-        if let avgPrice = candidate.avgPrice { parts.append("¥\(avgPrice)") }
-        if let openHours = candidate.openHours, !openHours.isEmpty { parts.append(openHours) }
-        return parts.joined(separator: " · ")
     }
 }

@@ -180,3 +180,98 @@ struct TransportRow: View {
         }
     }
 }
+
+// MARK: - Replacement candidates
+
+struct ReplacementCandidateSheet: View {
+    let candidates: [POICandidate]
+    let loading: Bool
+    let error: String?
+    let applyingReplacementItemID: UUID?
+    let onClose: () -> Void
+    let onRetry: () -> Void
+    let onApply: (POICandidate) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header
+            content
+        }
+        .padding(18)
+        .frame(minWidth: 360, idealWidth: 420, minHeight: 300)
+    }
+
+    private var header: some View {
+        HStack {
+            Text("替换地点")
+                .font(Typo.display(18, .bold))
+                .foregroundStyle(Palette.textPrimary)
+            Spacer()
+            Button("关闭", action: onClose)
+                .buttonStyle(.plain)
+                .foregroundStyle(Palette.textMuted)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if loading {
+            ProgressView()
+                .frame(maxWidth: .infinity, minHeight: 180)
+        } else if let error {
+            errorView(error)
+        } else if candidates.isEmpty {
+            Text("没有可替换的候选")
+                .font(.system(size: 13))
+                .foregroundStyle(Palette.textSecondary)
+                .frame(maxWidth: .infinity, minHeight: 180)
+        } else {
+            candidateList
+        }
+    }
+
+    private var candidateList: some View {
+        List(candidates) { candidate in
+            Button {
+                onApply(candidate)
+            } label: {
+                candidateRow(candidate)
+            }
+            .buttonStyle(.plain)
+            .disabled(applyingReplacementItemID != nil)
+        }
+        .listStyle(.plain)
+        .frame(minHeight: 240)
+    }
+
+    private func errorView(_ error: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(error)
+                .font(.system(size: 13))
+                .foregroundStyle(.red)
+            Button("重试", action: onRetry)
+                .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func candidateRow(_ candidate: POICandidate) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(candidate.name)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Palette.textPrimary)
+            Text(candidateMetadata(candidate))
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.textSecondary)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func candidateMetadata(_ candidate: POICandidate) -> String {
+        var parts = [candidate.subtype.isEmpty ? candidate.kind.label : candidate.subtype]
+        if let rating = candidate.rating { parts.append(String(format: "%.1f 分", rating)) }
+        if let avgPrice = candidate.avgPrice { parts.append("¥\(avgPrice)") }
+        if let openHours = candidate.openHours, !openHours.isEmpty { parts.append(openHours) }
+        return parts.joined(separator: " · ")
+    }
+}

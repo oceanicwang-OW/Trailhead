@@ -5,6 +5,10 @@
 import Foundation
 import SwiftData
 
+public enum TripRepositoryError: Error, Equatable {
+    case missingAdcode
+}
+
 public struct TripRepository {
     public let context: ModelContext
 
@@ -117,6 +121,35 @@ public struct TripRepository {
         item.lng = candidate.lng
         let orderedPOIs = day.sortedItems.filter { $0.kind != .transit }
         try await rebuildDay(day, withPOIs: orderedPOIs, routeUsing: source)
+    }
+
+    /// Regenerate one existing day without changing the parent trip or other days.
+    public func regenerateDay(_ day: DayPlan, in trip: Trip,
+                              source: POIDataSource, llm: LLMProvider) async throws {
+        let adcode = trip.adcode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !adcode.isEmpty else { throw TripRepositoryError.missingAdcode }
+
+        let recall = POIRecall(source: source, cache: POICache(context: context))
+        let candidates = try await recall.recall(adcode: adcode, tags: trip.prefs.tags)
+        guard !candidates.isEmpty else { throw ItineraryEngine.EngineError.noCandidates }
+
+        let perDay = try await ItineraryDayBuilder.planStops(prefs: trip.prefs,
+                                                             candidates: candidates,
+                                                             days: 1,
+                                                             llm: llm)
+        guard let stops = perDay.first, !stops.isEmpty else {
+            throw ItineraryEngine.EngineError.emptyPlan
+        }
+        let newItems = await ItineraryDayBuilder.buildItems(from: stops, source: source)
+
+        for old in day.items {
+            context.delete(old)
+        }
+        day.items = newItems
+        for (index, item) in day.sortedItems.enumerated() {
+            item.order = index
+        }
+        try context.save()
     }
 }
 

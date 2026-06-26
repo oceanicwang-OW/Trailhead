@@ -28,6 +28,44 @@ private final class RouteSpySource: POIDataSource {
     }
 }
 
+private final class RegenerateSpySource: POIDataSource {
+    var byTag: [String: [POICandidate]] = [:]
+    private(set) var routePairs: [String] = []
+
+    func geocodeCity(_ name: String) async throws -> (adcode: String, center: (Double, Double)) {
+        ("110100", (0, 0))
+    }
+
+    func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate] {
+        tags.flatMap { byTag[$0] ?? [] }
+    }
+
+    func route(from: POICandidate, to: POICandidate,
+               mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
+        routePairs.append("\(from.id)-\(to.id)")
+        return (18, 1800, 8)
+    }
+}
+
+private final class RegenerateLLM: LLMProvider {
+    var responses: [String]
+    private(set) var calls = 0
+
+    init(_ responses: [String]) {
+        self.responses = responses
+    }
+
+    func planItinerary(prefs: TripPrefs, candidates: [POICandidate], days: Int) async throws -> Data {
+        defer { calls += 1 }
+        return Data(responses[min(calls, responses.count - 1)].utf8)
+    }
+}
+
+private func regenCandidate(_ id: String, kind: ItemKind = .sight,
+                            lat: Double = 30.0, lng: Double = 104.0) -> POICandidate {
+    POICandidate(id: id, name: id, kind: kind, subtype: kind.label, lat: lat, lng: lng)
+}
+
 final class TripRepositoryTests: XCTestCase {
 
     func testCreateAndCount() throws {
@@ -236,5 +274,102 @@ final class TripRepositoryTests: XCTestCase {
         XCTAssertEqual(sorted.map(\.kind), [.sight, .food, .transit, .sight])
         XCTAssertEqual(sorted.map(\.name), ["A", "X Cafe", nil, "C"])
         XCTAssertEqual(source.routeCalls.map { "\($0.from)-\($0.to)" }, ["A-X", "X-C"])
+    }
+
+    func testRegenerateDayReplacesOnlySelectedDay() async throws {
+        let ctx = try TestSupport.makeContext()
+        let repo = TripRepository(context: ctx)
+        let source = RegenerateSpySource()
+        source.byTag = ["景点": [
+            regenCandidate("X", kind: .sight, lat: 30.0, lng: 104.0),
+            regenCandidate("Y", kind: .food, lat: 30.03, lng: 104.03),
+        ]]
+        let llm = RegenerateLLM([
+            #"{"days":[{"day":1,"items":[{"poi_id":"X","time":"10:00","stay_min":90,"note":"new"},{"poi_id":"Y","time":"12:00","stay_min":60},{"poi_id":"GHOST"}]}]}"#,
+        ])
+
+        let originalDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let oldA = PlanItem.poi(0, kind: .sight, time: "09:00", name: "Old A", subtype: "景点", note: "", stay: "")
+        oldA.poiId = "OLD-A"; oldA.lat = 30.0; oldA.lng = 104.0
+        let oldB = PlanItem.poi(1, kind: .food, time: "12:00", name: "Old B", subtype: "餐饮", note: "", stay: "")
+        oldB.poiId = "OLD-B"; oldB.lat = 30.01; oldB.lng = 104.01
+        let day0 = DayPlan(dayIndex: 0, date: originalDate, cityLabel: "成都", items: [oldA, oldB])
+        let untouched = PlanItem.poi(0, kind: .sight, time: "09:00", name: "Keep", subtype: "景点", note: "", stay: "")
+        untouched.poiId = "KEEP"; untouched.lat = 31.0; untouched.lng = 105.0
+        let day1 = DayPlan(dayIndex: 1, date: originalDate.addingTimeInterval(86_400), cityLabel: "成都", items: [untouched])
+        let trip = try repo.create(city: "成都", adcode: "510100", nights: 1,
+                                   prefs: TripPrefs(tags: ["景点"]), days: [day0, day1])
+        let oldDay0IDs = Set(day0.items.map(\.id))
+
+        try await repo.regenerateDay(day0, in: trip, source: source, llm: llm)
+
+        XCTAssertEqual(trip.sortedDays.count, 2)
+        XCTAssertEqual(day0.dayIndex, 0)
+        XCTAssertEqual(day0.date, originalDate)
+        XCTAssertEqual(day0.cityLabel, "成都")
+        XCTAssertEqual(day1.sortedItems.compactMap(\.poiId), ["KEEP"])
+
+        let regenerated = day0.sortedItems
+        XCTAssertEqual(regenerated.map(\.kind), [.sight, .transit, .food])
+        XCTAssertEqual(regenerated.compactMap(\.poiId), ["X", "Y"])
+        XCTAssertEqual(regenerated.map(\.order), [0, 1, 2])
+        XCTAssertEqual(regenerated[0].plannedTime, "10:00")
+        XCTAssertEqual(regenerated[0].stayLabel, "约 1.5 小时")
+        XCTAssertEqual(regenerated[0].note, "new")
+        XCTAssertTrue(regenerated.allSatisfy { !oldDay0IDs.contains($0.id) })
+        XCTAssertEqual(source.routePairs, ["X-Y"])
+    }
+
+    func testRegenerateDayNoCandidatesLeavesExistingItems() async throws {
+        let ctx = try TestSupport.makeContext()
+        let repo = TripRepository(context: ctx)
+        let source = RegenerateSpySource()
+        let llm = RegenerateLLM([
+            #"{"days":[{"day":1,"items":[{"poi_id":"X"}]}]}"#,
+        ])
+        let oldA = PlanItem.poi(0, kind: .sight, time: "09:00", name: "Old A", subtype: "景点", note: "", stay: "")
+        oldA.poiId = "OLD-A"; oldA.lat = 30.0; oldA.lng = 104.0
+        let oldB = PlanItem.poi(1, kind: .food, time: "12:00", name: "Old B", subtype: "餐饮", note: "", stay: "")
+        oldB.poiId = "OLD-B"; oldB.lat = 30.01; oldB.lng = 104.01
+        let day = DayPlan(dayIndex: 0, items: [oldA, oldB])
+        let trip = try repo.create(city: "成都", adcode: "510100",
+                                   prefs: TripPrefs(tags: ["景点"]), days: [day])
+        let oldIDs = day.sortedItems.map(\.id)
+
+        do {
+            try await repo.regenerateDay(day, in: trip, source: source, llm: llm)
+            XCTFail("Expected noCandidates")
+        } catch ItineraryEngine.EngineError.noCandidates {
+            XCTAssertEqual(day.sortedItems.map(\.id), oldIDs)
+            XCTAssertEqual(day.sortedItems.compactMap(\.poiId), ["OLD-A", "OLD-B"])
+            XCTAssertEqual(llm.calls, 0)
+        }
+    }
+
+    func testRegenerateDayEmptyPlanLeavesExistingItems() async throws {
+        let ctx = try TestSupport.makeContext()
+        let repo = TripRepository(context: ctx)
+        let source = RegenerateSpySource()
+        source.byTag = ["景点": [regenCandidate("X", kind: .sight)]]
+        let llm = RegenerateLLM([
+            #"{"days":[{"day":1,"items":[]}]}"#,
+        ])
+        let oldA = PlanItem.poi(0, kind: .sight, time: "09:00", name: "Old A", subtype: "景点", note: "", stay: "")
+        oldA.poiId = "OLD-A"; oldA.lat = 30.0; oldA.lng = 104.0
+        let oldB = PlanItem.poi(1, kind: .food, time: "12:00", name: "Old B", subtype: "餐饮", note: "", stay: "")
+        oldB.poiId = "OLD-B"; oldB.lat = 30.01; oldB.lng = 104.01
+        let day = DayPlan(dayIndex: 0, items: [oldA, oldB])
+        let trip = try repo.create(city: "成都", adcode: "510100",
+                                   prefs: TripPrefs(tags: ["景点"]), days: [day])
+        let oldIDs = day.sortedItems.map(\.id)
+
+        do {
+            try await repo.regenerateDay(day, in: trip, source: source, llm: llm)
+            XCTFail("Expected emptyPlan")
+        } catch ItineraryEngine.EngineError.emptyPlan {
+            XCTAssertEqual(day.sortedItems.map(\.id), oldIDs)
+            XCTAssertEqual(day.sortedItems.compactMap(\.poiId), ["OLD-A", "OLD-B"])
+            XCTAssertEqual(llm.calls, 1)
+        }
     }
 }

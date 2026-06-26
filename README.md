@@ -103,10 +103,10 @@ Trailhead/
 | 3 生成引擎 | T3.1 LLMProvider · T3.2 Prompt · T3.3 解析重试 · T3.4 FactChecker · T3.5 路线补全 · T3.6 generate 串联 · T3.7 进度 | ✅ |
 | 4–5 UI | 导航骨架 / 路线时间线 / 新建 / 生成中 / 地图（设计还原） | ✅ UI |
 | 引擎接线 | NewTrip→`engine.generate()`、GeneratingView 订阅 stage/progress、注入真实 client、错误提示 | ✅ |
-| 6 编辑重排 | T6.1 POI 重排已接 / T6.2 删除与替换并重算已接 / T6.3 单日重生成待接 | 🟡 |
+| 6 编辑重排 | T6.1 POI 重排已接 / T6.2 删除与替换并重算已接 / T6.3 单日重生成已接 | ✅ |
 | 7 设置 | T7.* API/用量/缓存（T7.1 Keychain 已接 / 用量统计待接） | 🟡 |
 | 8 打磨 | 空态✅ / 离线降级 / 回归 | 🟡 |
 
 引擎已接进 UI：`RootView` 持有 `ItineraryEngine`，「生成行程」→ 生成中（真实分步进度）→ 选中新行程；
 无 key / 配额 / 无候选等错误有明确文案。设置页已可把高德 Web 服务 Key 与 DeepSeek Key 写入 Keychain；
-填好两把 key 后即可真实生成。后续按顺序做 T6.3 单日重生成、T7.2 用量、T8 离线降级。详见 [`PDR-行迹.md`](PDR-行迹.md) §11–§12。
+填好两把 key 后即可真实生成。后续按顺序做 T7.2 用量、T8 离线降级。详见 [`PDR-行迹.md`](PDR-行迹.md) §11–§12。

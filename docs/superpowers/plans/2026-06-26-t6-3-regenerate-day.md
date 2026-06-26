@@ -1,6 +1,6 @@
 # T6.3 Regenerate Single Day Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Regenerate only the currently selected day of an existing trip, replacing that day's items while preserving every other day and trip metadata.
 
@@ -33,7 +33,7 @@
 **Files:**
 - Modify: `Packages/TrailheadCore/Tests/TrailheadCoreTests/TripRepositoryTests.swift`
 
-- [ ] **Step 1: Add regeneration test doubles**
+- [x] **Step 1: Add regeneration test doubles**
 
 Add these helpers near the existing `RouteSpySource`:
 
@@ -77,7 +77,7 @@ private func regenCandidate(_ id: String, kind: ItemKind = .sight,
 }
 ```
 
-- [ ] **Step 2: Write the failing behavior test**
+- [x] **Step 2: Write the failing behavior test**
 
 Add this test to `TripRepositoryTests`:
 
@@ -127,7 +127,7 @@ func testRegenerateDayReplacesOnlySelectedDay() async throws {
 }
 ```
 
-- [ ] **Step 3: Run the focused test and confirm RED**
+- [x] **Step 3: Run the focused test and confirm RED**
 
 Run:
 
@@ -146,7 +146,7 @@ Expected: FAIL because `TripRepository` has no `regenerateDay`.
 - Modify: `Packages/TrailheadCore/Sources/TrailheadCore/ItineraryEngine.swift`
 - Modify: `Packages/TrailheadCore/Sources/TrailheadCore/TripRepository.swift`
 
-- [ ] **Step 1: Create the shared builder**
+- [x] **Step 1: Create the shared builder**
 
 Create `ItineraryDayBuilder.swift`:
 
@@ -226,7 +226,7 @@ public enum ItineraryDayBuilder {
 }
 ```
 
-- [ ] **Step 2: Refactor `ItineraryEngine` onto the helper**
+- [x] **Step 2: Refactor `ItineraryEngine` onto the helper**
 
 In `ItineraryEngine.generate`, replace:
 
@@ -254,7 +254,7 @@ result.append(DayPlan(dayIndex: index, date: date, cityLabel: destination, items
 
 Delete the now-unused private `planWithRetry`, `stayLabel`, `mode`, and `haversineMeters` methods from `ItineraryEngine`.
 
-- [ ] **Step 3: Add repository error and regenerate method**
+- [x] **Step 3: Add repository error and regenerate method**
 
 In `TripRepository.swift`, add near imports:
 
@@ -296,7 +296,7 @@ public func regenerateDay(_ day: DayPlan, in trip: Trip,
 }
 ```
 
-- [ ] **Step 4: Run the focused regeneration test and confirm GREEN**
+- [x] **Step 4: Run the focused regeneration test and confirm GREEN**
 
 Run:
 
@@ -306,7 +306,7 @@ xcodebuild test -scheme TrailheadCore -destination 'platform=macOS' -only-testin
 
 Expected: PASS.
 
-- [ ] **Step 5: Run existing full-trip generation tests**
+- [x] **Step 5: Run existing full-trip generation tests**
 
 Run:
 
@@ -323,7 +323,7 @@ Expected: PASS. This guards the helper refactor.
 **Files:**
 - Modify: `Packages/TrailheadCore/Tests/TrailheadCoreTests/TripRepositoryTests.swift`
 
-- [ ] **Step 1: Add no-candidates test**
+- [x] **Step 1: Add no-candidates test**
 
 Add:
 
@@ -350,7 +350,7 @@ func testRegenerateDayNoCandidatesLeavesExistingItems() async throws {
 }
 ```
 
-- [ ] **Step 2: Add empty fact-checked plan test**
+- [x] **Step 2: Add empty fact-checked plan test**
 
 Add:
 
@@ -378,7 +378,7 @@ func testRegenerateDayEmptyPlanLeavesExistingItems() async throws {
 }
 ```
 
-- [ ] **Step 3: Run focused failure tests**
+- [x] **Step 3: Run focused failure tests**
 
 Run:
 
@@ -395,7 +395,7 @@ Expected: PASS.
 **Files:**
 - Modify: `Trailhead/Features/Timeline/RouteTimelineView.swift`
 
-- [ ] **Step 1: Add regeneration state**
+- [x] **Step 1: Add regeneration state**
 
 Add near other `@State` values:
 
@@ -403,7 +403,7 @@ Add near other `@State` values:
 @State private var regeneratingDayID: UUID?
 ```
 
-- [ ] **Step 2: Add regenerate action to header**
+- [x] **Step 2: Add regenerate action to header**
 
 Change the header HStack to include a spacer and button:
 
@@ -441,7 +441,7 @@ private func regenerateDayButton(_ day: DayPlan) -> some View {
 }
 ```
 
-- [ ] **Step 3: Disable edit operations while regenerating**
+- [x] **Step 3: Disable edit operations while regenerating**
 
 Update edit/save/move/replace/delete controls so they are disabled when `regeneratingDayID != nil`.
 
@@ -465,7 +465,7 @@ For move buttons, include `regeneratingDayID != nil` in each `disabled:` express
 
 For replace/delete buttons, include `regeneratingDayID != nil` in each `disabled:` expression.
 
-- [ ] **Step 4: Implement UI trigger**
+- [x] **Step 4: Implement UI trigger**
 
 Add:
 
@@ -492,7 +492,7 @@ private func regenerateDay(_ day: DayPlan) {
 }
 ```
 
-- [ ] **Step 5: Build macOS app**
+- [x] **Step 5: Build macOS app**
 
 Run:
 
@@ -511,13 +511,13 @@ Expected: PASS.
 - Modify: `PDR-行迹.md`
 - Modify: `docs/superpowers/plans/2026-06-26-t6-3-regenerate-day.md`
 
-- [ ] **Step 1: Update progress text**
+- [x] **Step 1: Update progress text**
 
 Update README milestone row and next-step text so T6.3 is complete and T7.2 is next.
 
 Update PDR T6.3 row/status notes so single-day regeneration is complete.
 
-- [ ] **Step 2: Run full verification**
+- [x] **Step 2: Run full verification**
 
 Run:
 
@@ -559,7 +559,7 @@ make lint
 
 Expected: PASS with 0 violations.
 
-- [ ] **Step 3: Commit implementation**
+- [x] **Step 3: Commit implementation**
 
 Run:
 
