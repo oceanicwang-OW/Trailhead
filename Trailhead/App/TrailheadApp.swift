@@ -4,6 +4,7 @@
 
 import SwiftData
 import SwiftUI
+import TrailheadCore
 
 @main
 struct TrailheadApp: App {
@@ -11,7 +12,7 @@ struct TrailheadApp: App {
 
     init() {
         do {
-            container = try ModelContainer(for: Trip.self, DayPlan.self, PlanItem.self)
+            container = try ModelContainer(for: Trip.self, DayPlan.self, PlanItem.self, CachedPOI.self)
             SampleData.seedIfNeeded(container.mainContext)
         } catch {
             fatalError("Failed to set up SwiftData: \(error)")

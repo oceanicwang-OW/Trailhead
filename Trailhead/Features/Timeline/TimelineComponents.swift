@@ -3,6 +3,7 @@
 //  with transport segments between them. Geometry mirrors Trailhead.dc.html.
 
 import SwiftUI
+import TrailheadCore
 
 // MARK: - Spine gutter
 

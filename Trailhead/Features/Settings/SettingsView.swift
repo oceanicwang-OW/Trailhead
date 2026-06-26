@@ -3,6 +3,7 @@
 //  cache. UI mirrors the mockup; values bind to KeychainStore + a usage counter.
 
 import SwiftUI
+import TrailheadCore
 
 struct SettingsView: View {
     @State private var providerName = "Anthropic · Claude"

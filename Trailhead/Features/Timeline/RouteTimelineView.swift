@@ -3,6 +3,7 @@
 //  a day header, day-tabs, and the scrolling route timeline for the selected day.
 
 import SwiftUI
+import TrailheadCore
 
 struct RouteTimelineView: View {
     let trip: Trip

@@ -4,6 +4,7 @@
 
 import SwiftData
 import SwiftUI
+import TrailheadCore
 
 struct RootView: View {
     @Environment(\.modelContext) private var context

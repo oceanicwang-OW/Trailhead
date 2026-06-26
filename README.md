@@ -35,12 +35,18 @@ Trailhead/
 ├─ .swiftlint.yml .swiftformat     代码规范（SwiftLint 构建期自动跑）
 ├─ .githooks/pre-commit            提交前机密拦截（密钥/凭据不入库）
 ├─ docs/                           CODE_STYLE.md · MACOS_DEV.md
-└─ Trailhead/                      源码（XcodeGen sources 根）
+├─ Packages/TrailheadCore/         纯逻辑层 Swift Package（无 UI 依赖）
+│  ├─ Sources/TrailheadCore/       Models / Services / Stores             [T1.1 T1.2 T1.4 / T2 T3]
+│  │  ├─ Models.swift              SwiftData 实体 + 枚举                   [T1.1]
+│  │  ├─ CachedPOI.swift           POI 缓存实体                            [T1.2]
+│  │  ├─ Services.swift            Keychain + POIDataSource/LLMProvider + Engine 骨架
+│  │  ├─ POICache.swift            (adcode,category) 缓存 + TTL            [T1.2]
+│  │  └─ TripRepository.swift      Trip CRUD + 重排                        [T1.4]
+│  └─ Tests/TrailheadCoreTests/    hostless 单测（XCTest，macOS 秒级）     [T1.2 T1.4]
+└─ Trailhead/                      App 源码（XcodeGen sources 根；依赖 TrailheadCore）
    ├─ App/                         @main 入口 + SwiftData 容器 + 首启动播种     [T0.1 T0.3]
-   ├─ DesignSystem/                颜色/字体/间距 token（Theme）                [设计系统 / Utils]
-   ├─ Models/                      SwiftData 实体 + 枚举 + 示例数据             [T1.1]
-   ├─ Services/                    Keychain(真实) + POIDataSource/LLMProvider
-   │                               协议桩 + ItineraryEngine 骨架               [T1.3 / T2 / T3]
+   ├─ DesignSystem/                颜色/字体/间距 token + ItemKind→色映射       [设计系统]
+   ├─ Models/SampleData.swift      首启动播种的「关西环游」示例
    ├─ Features/                    各界面（视图层，按功能分组）
    │  ├─ Root/                     macOS 三栏 / iOS Tab 自适应外壳              [T4.1 T4.2]
    │  ├─ Sidebar/                  行程库侧栏                                   [T4.3]
@@ -55,12 +61,15 @@ Trailhead/
 
 | 层 | 位置 | 职责 | PDR 对应 |
 |---|---|---|---|
-| **App** | `App/` | 入口、`ModelContainer` 注入、首启动播种 | §3 / T0.3 |
-| **Models** | `Models/` | SwiftData 实体（`Trip`/`DayPlan`/`PlanItem`）、枚举 | §4 / T1.1 |
-| **Services** | `Services/` | `KeychainStore`（凭据）、`POIDataSource`/`LLMProvider` 协议 + 桩 | §5 / T1.3 T2 |
-| **Engine** | `Services/Services.swift` | `ItineraryEngine` 生成流水线（骨架） | §6 / T3 |
-| **Views** | `Features/` | SwiftUI 界面，`@Query` 直驱、只读状态、零网络 | §7 / T4 T5 |
-| **DesignSystem** | `DesignSystem/` | `Palette`/`Typo`/`Metric` 设计 token | §7 组件规范 |
+| **App** | `Trailhead/App/` | 入口、`ModelContainer` 注入、首启动播种 | §3 / T0.3 |
+| **Models** | `TrailheadCore/Models.swift` | SwiftData 实体（`Trip`/`DayPlan`/`PlanItem`）、枚举 | §4 / T1.1 |
+| **Stores** | `TrailheadCore/{POICache,TripRepository}.swift` | POI 缓存 + Trip 仓储/重排 | §4 / T1.2 T1.4 |
+| **Services/Engine** | `TrailheadCore/Services.swift` | `KeychainStore`、数据源/LLM 协议 + 桩、`ItineraryEngine` 骨架 | §5 §6 / T1.3 T2 T3 |
+| **Views** | `Trailhead/Features/` | SwiftUI 界面，`@Query` 直驱、只读状态、零网络 | §7 / T4 T5 |
+| **DesignSystem** | `Trailhead/DesignSystem/` | `Palette`/`Typo`/`Metric` token + `ItemKind` 着色 | §7 组件规范 |
+
+> 纯逻辑（Models/Stores/Services）抽进 **TrailheadCore** 本地 Swift Package：与 SwiftUI 解耦，
+> 单测 hostless（`xcodebuild test -scheme TrailheadCore -destination platform=macOS`，秒级、CI 稳定）。
 
 > **架构缝**：视图与引擎只依赖 `POIDataSource` / `LLMProvider` 协议，目前注入 `Stub*`。
 > 真实 `AmapClient` / `DeepSeekClient` 落地后只替换注入，**视图层零改动**（PDR §11）。

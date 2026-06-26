@@ -6,6 +6,7 @@
 
 import MapKit
 import SwiftUI
+import TrailheadCore
 
 struct MapInspector: View {
     let trip: Trip

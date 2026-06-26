@@ -3,6 +3,7 @@
 //  hands off to the itinerary engine.
 
 import SwiftUI
+import TrailheadCore
 
 struct NewTripView: View {
     @Environment(\.dismiss) private var dismiss

@@ -13,6 +13,11 @@ options:
   generateEmptyDirectories: false
   groupSortPosition: top
 
+# 纯逻辑层（Models/Stores/Services）拆成本地 Swift Package，便于 hostless 单测
+packages:
+  TrailheadCore:
+    path: Packages/TrailheadCore
+
 # 全工程通用构建设置
 settings:
   base:
@@ -31,6 +36,8 @@ targets:
     supportedDestinations: [iOS, macOS]
     sources:
       - path: Trailhead
+    dependencies:
+      - package: TrailheadCore
     settings:
       base:
         PRODUCT_NAME: Trailhead

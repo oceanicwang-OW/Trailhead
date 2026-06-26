@@ -1,19 +1,21 @@
 //  Services.swift
-//  Architecture seams for PDR phases 2–3. KeychainStore is real; the network
-//  clients and engine are protocol + stub so the UI compiles and runs on seed
-//  data today, and the real implementations drop in without touching the views.
+//  架构缝（PDR 阶段 2–3）。KeychainStore 真实；网络 client 与引擎为协议 + 桩，
+//  真实实现落地后替换注入，视图层零改动。
 
 import Foundation
+#if canImport(Combine)
+import Combine
+#endif
 #if canImport(Security)
 import Security
 #endif
 
 // MARK: - KeychainStore (PDR T1.3, real)
 
-enum KeychainStore {
+public enum KeychainStore {
     private static let service = "app.trailhead.keys"
 
-    static func set(_ value: String, for account: String) {
+    public static func set(_ value: String, for account: String) {
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -25,7 +27,7 @@ enum KeychainStore {
         SecItemAdd(add as CFDictionary, nil)
     }
 
-    static func get(_ account: String) -> String? {
+    public static func get(_ account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -39,7 +41,7 @@ enum KeychainStore {
         return String(data: data, encoding: .utf8)
     }
 
-    static func delete(_ account: String) {
+    public static func delete(_ account: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -48,49 +50,65 @@ enum KeychainStore {
         SecItemDelete(query as CFDictionary)
     }
 
-    enum Account { static let amap = "amap_web_key"; static let llm = "llm_api_key" }
+    public enum Account { public static let amap = "amap_web_key"; public static let llm = "llm_api_key" }
 }
 
 // MARK: - POI / route data source (PDR T2)
 
-struct POICandidate: Identifiable, Hashable {
-    let id: String           // amap poi id
-    var name: String
-    var kind: ItemKind
-    var subtype: String
-    var lat: Double
-    var lng: Double
-    var rating: Double?
-    var openHours: String?
-    var avgPrice: Int?
+public struct POICandidate: Identifiable, Hashable, Sendable {
+    public let id: String           // amap poi id
+    public var name: String
+    public var kind: ItemKind
+    public var subtype: String
+    public var lat: Double
+    public var lng: Double
+    public var rating: Double?
+    public var openHours: String?
+    public var avgPrice: Int?
+
+    public init(id: String, name: String, kind: ItemKind, subtype: String,
+                lat: Double, lng: Double, rating: Double? = nil,
+                openHours: String? = nil, avgPrice: Int? = nil) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.subtype = subtype
+        self.lat = lat
+        self.lng = lng
+        self.rating = rating
+        self.openHours = openHours
+        self.avgPrice = avgPrice
+    }
 }
 
-protocol POIDataSource {
+public protocol POIDataSource {
     func geocodeCity(_ name: String) async throws -> (adcode: String, center: (Double, Double))
     func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate]
     func route(from: POICandidate, to: POICandidate, mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?)
 }
 
 /// Stub used until AmapClient lands (PDR T2.1–T2.5).
-struct StubPOISource: POIDataSource {
-    func geocodeCity(_ name: String) async throws -> (adcode: String, center: (Double, Double)) {
+public struct StubPOISource: POIDataSource {
+    public init() {}
+    public func geocodeCity(_ name: String) async throws -> (adcode: String, center: (Double, Double)) {
         ("STUB", (34.9956, 135.7741))
     }
-    func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate] { [] }
-    func route(from: POICandidate, to: POICandidate, mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
+    public func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate] { [] }
+    public func route(from: POICandidate, to: POICandidate, mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         (15, 1200, nil)
     }
 }
 
 // MARK: - LLM provider (PDR T3.1, swappable: DeepSeek / 通义 / Kimi / Claude)
 
-protocol LLMProvider {
+public protocol LLMProvider {
     /// Returns a JSON itinerary that references only the given candidate poi ids.
     func planItinerary(prefs: TripPrefs, candidates: [POICandidate], days: Int) async throws -> Data
 }
 
-struct StubLLMProvider: LLMProvider {
-    func planItinerary(prefs: TripPrefs, candidates: [POICandidate], days: Int) async throws -> Data {
+public struct StubLLMProvider: LLMProvider {
+    public init() {}
+    public func planItinerary(prefs: TripPrefs, candidates: [POICandidate], days: Int) async throws -> Data {
         Data("{\"days\":[]}".utf8)
     }
 }
@@ -98,22 +116,22 @@ struct StubLLMProvider: LLMProvider {
 // MARK: - Itinerary engine (PDR T3.6 skeleton)
 
 @MainActor
-final class ItineraryEngine: ObservableObject {
-    enum Stage: String { case analyzing, routing, transit, dining, budgeting, done }
-    @Published var stage: Stage = .analyzing
-    @Published var progress: Double = 0
+public final class ItineraryEngine: ObservableObject {
+    public enum Stage: String, Sendable { case analyzing, routing, transit, dining, budgeting, done }
+    @Published public var stage: Stage = .analyzing
+    @Published public var progress: Double = 0
 
     private let poi: POIDataSource
     private let llm: LLMProvider
-    init(poi: POIDataSource = StubPOISource(), llm: LLMProvider = StubLLMProvider()) {
+    public init(poi: POIDataSource = StubPOISource(), llm: LLMProvider = StubLLMProvider()) {
         self.poi = poi; self.llm = llm
     }
 
     /// Pipeline outline (PDR §3): geocode → recall POIs → LLM plan (poi_id-locked)
     /// → route fill → FactChecker → persist. Implemented in phase 3.
-    func generate(prefs: TripPrefs, destination: String) async throws -> Trip {
+    public func generate(prefs: TripPrefs, destination: String) async throws -> Trip {
         // TODO(PDR T3.2–T3.6): wire the real pipeline.
         throw EngineError.notImplemented
     }
-    enum EngineError: Error { case notImplemented }
+    public enum EngineError: Error { case notImplemented }
 }

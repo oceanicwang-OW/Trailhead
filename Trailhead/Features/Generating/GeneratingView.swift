@@ -3,6 +3,7 @@
 //  Steps map to ItineraryEngine.Stage so the real pipeline can drive this.
 
 import SwiftUI
+import TrailheadCore
 
 struct GeneratingView: View {
     var city: String = "关西"

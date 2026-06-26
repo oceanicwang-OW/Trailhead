@@ -4,6 +4,7 @@
 
 import SwiftData
 import SwiftUI
+import TrailheadCore
 
 struct TripSidebar: View {
     let trips: [Trip]

@@ -39,6 +39,10 @@ build-ios: project ## 编译 iOS 模拟器版
 .PHONY: build
 build: build-mac build-ios ## 双端编译
 
+.PHONY: test
+test: ## 跑 TrailheadCore 单测（hostless，macOS 秒级）
+	cd Packages/TrailheadCore && xcodebuild test -scheme TrailheadCore -destination 'platform=macOS'
+
 .PHONY: lint
 lint: ## SwiftLint 检查
 	swiftlint lint --config .swiftlint.yml
