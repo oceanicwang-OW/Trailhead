@@ -104,7 +104,7 @@ Trailhead/
 | 4–5 UI | 导航骨架 / 路线时间线 / 新建 / 生成中 / 地图（设计还原） | ✅ UI |
 | 引擎接线 | NewTrip→`engine.generate()`、GeneratingView 订阅 stage/progress、注入真实 client、错误提示 | ✅ |
 | 6 编辑重排 | T6.1 POI 重排已接 / T6.2 删除与替换并重算已接 / T6.3 单日重生成已接 | ✅ |
-| 7 设置 | T7.* API/用量/缓存（T7.1 Keychain 已接 / 用量统计待接） | 🟡 |
+| 7 设置 | T7.1 key 写入 ✅ / T7.2 用量统计（本地按天计数 + 进度条）✅ / T7.3 缓存清除 | 🟡 |
 | 8 打磨 | 空态✅ / 离线降级 / 回归 | 🟡 |
 
 引擎已接进 UI：`RootView` 持有 `ItineraryEngine`，「生成行程」→ 生成中（真实分步进度）→ 选中新行程；

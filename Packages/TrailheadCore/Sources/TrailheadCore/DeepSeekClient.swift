@@ -37,17 +37,20 @@ public struct DeepSeekClient: LLMProvider {
     private let maxRetries: Int
     private let session: URLSession
     private let keyProvider: () -> String?
+    private let onCall: (() -> Void)?
 
     public init(model: String = "deepseek-chat",
                 timeout: TimeInterval = 30,
                 maxRetries: Int = 1,
                 session: URLSession = .shared,
-                keyProvider: @escaping () -> String? = { KeychainStore.get(KeychainStore.Account.llm) }) {
+                keyProvider: @escaping () -> String? = { KeychainStore.get(KeychainStore.Account.llm) },
+                onCall: (() -> Void)? = nil) {
         self.model = model
         self.timeout = timeout
         self.maxRetries = maxRetries
         self.session = session
         self.keyProvider = keyProvider
+        self.onCall = onCall
     }
 
     /// 低层补全（PDR T2.6）：返回 choices[0].message.content 文本。
@@ -90,6 +93,7 @@ public struct DeepSeekClient: LLMProvider {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await session.data(for: request)
+        onCall?()   // 计一次 LLM 调用（PDR T7.2）
         if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             throw LLMError.http(status: http.statusCode)
         }

@@ -7,9 +7,17 @@ import TrailheadCore
 
 struct SettingsView: View {
     @StateObject private var keys = APIKeySettingsViewModel()
-    @State private var quotaUsed = 1240
-    @State private var quotaTotal = 2000
+    @State private var amapToday = 0
+    @State private var llmToday = 0
+    /// 软性日预算（仅用于进度条参照；高德个人免费配额按接口分别计，非硬上限）。
+    private let dailyBudget = 5000
     @State private var offlineMaps = true
+
+    private func reloadUsage() {
+        let usage = UsageStore()
+        amapToday = usage.count(.amap)
+        llmToday = usage.count(.llm)
+    }
 
     var body: some View {
         ScrollView {
@@ -39,17 +47,23 @@ struct SettingsView: View {
                     )
                 }
 
-                group("本月用量") {
+                group("今日用量") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 0) {
-                            Text("请求配额").font(Typo.body).foregroundStyle(Palette.textPrimary)
+                            Text("高德接口调用").font(Typo.body).foregroundStyle(Palette.textPrimary)
                             Spacer()
-                            Text("\(quotaUsed)").font(Typo.body.weight(.bold)).foregroundStyle(Palette.textPrimary)
-                            Text(" / \(quotaTotal) 次").font(Typo.body).foregroundStyle(Palette.textTertiary)
+                            Text("\(amapToday)").font(Typo.body.weight(.bold)).foregroundStyle(Palette.textPrimary)
+                            Text(" / \(dailyBudget) 次").font(Typo.body).foregroundStyle(Palette.textTertiary)
                         }
-                        ProgressView(value: Double(quotaUsed), total: Double(quotaTotal)).tint(Palette.green)
-                        Text("还剩 \(quotaTotal - quotaUsed) 次生成 · 配额将于 7 月 1 日重置")
-                            .font(Typo.caption2).foregroundStyle(Palette.textSecondary)
+                        ProgressView(value: Double(min(amapToday, dailyBudget)), total: Double(dailyBudget))
+                            .tint(amapToday >= dailyBudget ? Palette.red : Palette.green)
+                        HStack(spacing: 0) {
+                            Text("DeepSeek 生成").font(Typo.caption).foregroundStyle(Palette.textSecondary)
+                            Spacer()
+                            Text("\(llmToday) 次").font(Typo.caption).foregroundStyle(Palette.textSecondary)
+                        }
+                        Text("本地计数 · 次日 0 点自动归零")
+                            .font(Typo.caption2).foregroundStyle(Palette.textTertiary)
                     }.padding(.horizontal, 15).padding(.vertical, 14)
                 }
 
@@ -72,7 +86,7 @@ struct SettingsView: View {
             .padding(26)
         }
         .background(Palette.groupedBG)
-        .onAppear { keys.load() }
+        .onAppear { keys.load(); reloadUsage() }
     }
 
     // helpers

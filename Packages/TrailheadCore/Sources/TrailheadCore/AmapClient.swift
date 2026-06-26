@@ -57,11 +57,14 @@ public struct AmapClient: POIDataSource {
     private let base = URL(string: "https://restapi.amap.com")!
     private let session: URLSession
     private let keyProvider: () -> String?
+    private let onCall: (() -> Void)?
 
     public init(session: URLSession = .shared,
-                keyProvider: @escaping () -> String? = { KeychainStore.get(KeychainStore.Account.amap) }) {
+                keyProvider: @escaping () -> String? = { KeychainStore.get(KeychainStore.Account.amap) },
+                onCall: (() -> Void)? = nil) {
         self.session = session
         self.keyProvider = keyProvider
+        self.onCall = onCall
     }
 
     // MARK: POIDataSource
@@ -124,6 +127,7 @@ public struct AmapClient: POIDataSource {
             .sorted { $0.key < $1.key }
             .map { URLQueryItem(name: $0.key, value: $0.value) }
         let (data, _) = try await session.data(from: comps.url!)
+        onCall?()   // 计一次高德调用（PDR T7.2）
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw AmapError.decoding("响应非 JSON 对象")
         }
