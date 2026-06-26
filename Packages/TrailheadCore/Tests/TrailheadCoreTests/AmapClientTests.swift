@@ -6,38 +6,12 @@ import Foundation
 @testable import TrailheadCore
 import XCTest
 
-// MARK: - Mock URLProtocol
-
-final class MockURLProtocol: URLProtocol {
-    static var requests: [URLRequest] = []
-    static var body: Data = Data()
-    static var statusCode = 200
-
-    static func stub(_ json: String, status: Int = 200) {
-        body = Data(json.utf8); statusCode = status; requests = []
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool { true }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    override func startLoading() {
-        MockURLProtocol.requests.append(request)
-        let resp = HTTPURLResponse(url: request.url!, statusCode: MockURLProtocol.statusCode,
-                                   httpVersion: nil, headerFields: nil)!
-        client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: MockURLProtocol.body)
-        client?.urlProtocolDidFinishLoading(self)
-    }
-    override func stopLoading() {}
-}
-
-// MARK: - Tests
+// MockURLProtocol 定义在 TestSupport.swift（多个测试共享）。
 
 final class AmapClientTests: XCTestCase {
 
     private func makeClient(key: String? = "TESTKEY") -> AmapClient {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [MockURLProtocol.self]
-        return AmapClient(session: URLSession(configuration: config), keyProvider: { key })
+        AmapClient(session: TestSupport.mockSession(), keyProvider: { key })
     }
 
     private func queryValue(_ name: String, in req: URLRequest) -> String? {
