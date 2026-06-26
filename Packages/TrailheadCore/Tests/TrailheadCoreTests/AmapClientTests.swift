@@ -110,6 +110,7 @@ final class AmapClientTests: XCTestCase {
         XCTAssertEqual(req.url?.path, "/v5/direction/transit/integrated")
         XCTAssertEqual(queryValue("city1", in: req), "510100")   // city 已用于 city1/city2
         XCTAssertEqual(queryValue("city2", in: req), "510100")
+        XCTAssertEqual(queryValue("show_fields", in: req), "cost")   // 否则无 duration/transit_fee
     }
 
     func testTransitWithoutCityFallsBackToDriving() async throws {

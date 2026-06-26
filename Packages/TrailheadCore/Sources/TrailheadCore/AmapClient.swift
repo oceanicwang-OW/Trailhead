@@ -142,7 +142,7 @@ public struct AmapClient: POIDataSource {
 
     private func pathRoute(_ path: String, _ origin: String, _ destination: String) async throws
         -> (minutes: Int, meters: Int, cost: Int?) {
-        let json = try await get(path, ["origin": origin, "destination": destination])
+        let json = try await get(path, ["origin": origin, "destination": destination, "show_fields": "cost"])
         guard let route = json["route"] as? [String: Any],
               let p = (route["paths"] as? [[String: Any]])?.first else { throw AmapError.emptyResult }
         let meters = Self.int(p["distance"]) ?? 0
@@ -155,6 +155,7 @@ public struct AmapClient: POIDataSource {
         -> (minutes: Int, meters: Int, cost: Int?) {
         let json = try await get("/v5/direction/transit/integrated", [
             "origin": origin, "destination": destination, "city1": city, "city2": city,
+            "show_fields": "cost",   // v5：不带则不返回 cost.duration / transit_fee
         ])
         guard let route = json["route"] as? [String: Any],
               let t = (route["transits"] as? [[String: Any]])?.first else { throw AmapError.emptyResult }
