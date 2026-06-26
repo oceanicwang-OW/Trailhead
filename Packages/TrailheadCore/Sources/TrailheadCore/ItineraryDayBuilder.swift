@@ -10,6 +10,8 @@ public enum ItineraryDayBuilder {
         return FactChecker.reconcile(plan, candidates: candidates)
     }
 
+    /// @MainActor：创建 PlanItem(@Model) 须与 mainContext 同处主线程；route 网络经 await 仍在后台。
+    @MainActor
     public static func buildItems(from stops: [PlannedStop], source: POIDataSource, city: String = "") async -> [PlanItem] {
         var items: [PlanItem] = []
         var order = 0

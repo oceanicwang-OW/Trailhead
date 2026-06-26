@@ -15,6 +15,8 @@ public struct POIRecall {
 
     /// 按 tags 召回候选（去重）。每个 tag 为一个缓存维度：
     /// 命中缓存 → 用缓存；未命中 → 调 `source.searchPOI(单 tag)` 并写回缓存。
+    /// @MainActor：缓存读写走 ModelContext，须在主线程；网络调用经 await 仍在后台。
+    @MainActor
     public func recall(adcode: String, tags: [String], now: Date = .now) async throws -> [POICandidate] {
         let categories = tags.isEmpty ? ["景点"] : Array(Set(tags)).sorted()
         var seen = Set<String>()

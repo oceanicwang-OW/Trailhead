@@ -103,6 +103,8 @@ public struct TripRepository {
 
     /// Delete one POI and rebuild transit rows between the remaining POIs.
     /// `adcode` 用于公交路线 city；缺省（"")时远途退化为驾车。
+    /// @MainActor：ModelContext / @Model 操作须在主线程（route 网络经 await 仍在后台）。
+    @MainActor
     public func deletePOI(_ item: PlanItem, from day: DayPlan,
                           routeUsing source: POIDataSource, adcode: String = "") async throws {
         guard item.kind != .transit else { return }
@@ -112,6 +114,7 @@ public struct TripRepository {
     }
 
     /// Replace one POI and rebuild transit rows while preserving its schedule fields and position.
+    @MainActor
     public func replacePOI(_ item: PlanItem, with candidate: POICandidate,
                            in day: DayPlan, routeUsing source: POIDataSource, adcode: String = "") async throws {
         guard item.kind != .transit else { return }
@@ -126,6 +129,7 @@ public struct TripRepository {
     }
 
     /// Regenerate one existing day without changing the parent trip or other days.
+    @MainActor
     public func regenerateDay(_ day: DayPlan, in trip: Trip,
                               source: POIDataSource, llm: LLMProvider) async throws {
         let adcode = trip.adcode.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -156,6 +160,7 @@ public struct TripRepository {
 }
 
 private extension TripRepository {
+    @MainActor
     func rebuildDay(_ day: DayPlan, withPOIs orderedPOIs: [PlanItem],
                     routeUsing source: POIDataSource, city: String = "") async throws {
         var transitBeforePOI: [UUID: PlanItem] = [:]
