@@ -100,13 +100,23 @@ final class AmapClientTests: XCTestCase {
         XCTAssertEqual(MockURLProtocol.requests.first?.url?.path, "/v5/direction/driving")
     }
 
-    func testRouteTransit() async throws {
+    func testRouteTransitUsesCity() async throws {
         MockURLProtocol.stub(#"{"status":"1","info":"OK","infocode":"10000","route":{"transits":[{"distance":"5000","cost":{"duration":"1500","transit_fee":"6"}}]}}"#)
-        let r = try await makeClient().route(from: poi("A"), to: poi("B"), mode: .metro)
+        let r = try await makeClient().route(from: poi("A"), to: poi("B"), mode: .metro, city: "510100")
         XCTAssertEqual(r.meters, 5000)
         XCTAssertEqual(r.minutes, 25)
         XCTAssertEqual(r.cost, 6)
-        XCTAssertEqual(MockURLProtocol.requests.first?.url?.path, "/v5/direction/transit/integrated")
+        let req = try XCTUnwrap(MockURLProtocol.requests.first)
+        XCTAssertEqual(req.url?.path, "/v5/direction/transit/integrated")
+        XCTAssertEqual(queryValue("city1", in: req), "510100")   // city 已用于 city1/city2
+        XCTAssertEqual(queryValue("city2", in: req), "510100")
+    }
+
+    func testTransitWithoutCityFallsBackToDriving() async throws {
+        MockURLProtocol.stub(#"{"status":"1","info":"OK","infocode":"10000","route":{"paths":[{"distance":"4200","cost":{"duration":"1080"}}]}}"#)
+        let r = try await makeClient().route(from: poi("A"), to: poi("B"), mode: .metro, city: "")
+        XCTAssertEqual(r.meters, 4200)
+        XCTAssertEqual(MockURLProtocol.requests.first?.url?.path, "/v5/direction/driving")  // 无 city → 退化驾车
     }
 
     // T2.4 ---------------------------------------------------------------

@@ -50,7 +50,7 @@ public final class ItineraryEngine: ObservableObject {
         guard perDay.contains(where: { !$0.isEmpty }) else { throw EngineError.emptyPlan }
 
         set(.transit, 0.8)
-        let dayPlans = await buildDays(perDay, destination: destination, startDate: startDate)
+        let dayPlans = await buildDays(perDay, destination: destination, adcode: adcode, startDate: startDate)
 
         set(.budgeting, 0.95)
         let trip = try repository.create(
@@ -64,12 +64,13 @@ public final class ItineraryEngine: ObservableObject {
     // MARK: - 步骤
 
     /// 组装每天的 PlanItem，并在相邻 POI 间补交通段（PDR T3.5）。
-    private func buildDays(_ perDay: [[PlannedStop]], destination: String, startDate: Date) async -> [DayPlan] {
+    private func buildDays(_ perDay: [[PlannedStop]], destination: String,
+                           adcode: String, startDate: Date) async -> [DayPlan] {
         let cal = Calendar.current
         var result: [DayPlan] = []
         for (index, stops) in perDay.enumerated() {
             let date = cal.date(byAdding: .day, value: index, to: startDate) ?? startDate
-            let items = await ItineraryDayBuilder.buildItems(from: stops, source: source)
+            let items = await ItineraryDayBuilder.buildItems(from: stops, source: source, city: adcode)
             result.append(DayPlan(dayIndex: index, date: date, cityLabel: destination, items: items))
         }
         return result

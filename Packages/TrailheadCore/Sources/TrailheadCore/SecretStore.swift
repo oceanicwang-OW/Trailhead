@@ -41,3 +41,16 @@ public enum SecretStore {
         return json
     }
 }
+
+// MARK: - 生产用 client 工厂（统一走 SecretStore，避免各处重复注入）
+
+public extension AmapClient {
+    static func live() -> AmapClient { AmapClient(keyProvider: { SecretStore.amapKey() }) }
+}
+
+public extension DeepSeekClient {
+    /// 默认模型 deepseek-v4-pro、超时 180s（v4-pro 推理较慢）。
+    static func live(model: String = "deepseek-v4-pro", timeout: TimeInterval = 180) -> DeepSeekClient {
+        DeepSeekClient(model: model, timeout: timeout, keyProvider: { SecretStore.deepseekKey() })
+    }
+}

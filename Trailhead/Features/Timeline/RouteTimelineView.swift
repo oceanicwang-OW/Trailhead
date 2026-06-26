@@ -367,7 +367,7 @@ struct RouteTimelineView: View {
                     replacementLoading = false
                     return
                 }
-                let recall = POIRecall(source: AmapClient(), cache: POICache(context: modelContext))
+                let recall = POIRecall(source: AmapClient.live(), cache: POICache(context: modelContext))
                 let existingPOIIDs = Set(day.sortedItems.compactMap(\.poiId))
                 let tags = replacementTags(for: item)
                 replacementCandidates = try await recall.recall(adcode: adcode, tags: tags)
@@ -404,7 +404,7 @@ private extension RouteTimelineView {
             do {
                 let repo = TripRepository(context: modelContext)
                 try repo.reorderPOIs(day, orderedPOIIDs: currentIDs)
-                try await repo.replacePOI(item, with: candidate, in: day, routeUsing: AmapClient())
+                try await repo.replacePOI(item, with: candidate, in: day, routeUsing: AmapClient.live(), adcode: trip.adcode)
                 draftPOIIDs = currentIDs
                 selectedItemID = item.id
                 replacingItem = nil
@@ -424,7 +424,7 @@ private extension RouteTimelineView {
             do {
                 let repo = TripRepository(context: modelContext)
                 try repo.reorderPOIs(day, orderedPOIIDs: currentIDs)
-                try await repo.deletePOI(item, from: day, routeUsing: AmapClient())
+                try await repo.deletePOI(item, from: day, routeUsing: AmapClient.live(), adcode: trip.adcode)
                 draftPOIIDs = currentIDs.filter { $0 != item.id }
                 if selectedItemID == item.id {
                     selectedItemID = draftPOIIDs.first
@@ -445,8 +445,8 @@ private extension RouteTimelineView {
         Task { @MainActor in
             do {
                 try await TripRepository(context: modelContext).regenerateDay(day, in: trip,
-                                                                              source: AmapClient(),
-                                                                              llm: DeepSeekClient())
+                                                                              source: AmapClient.live(),
+                                                                              llm: DeepSeekClient.live())
                 selectedItemID = day.sortedItems.first { $0.kind != .transit }?.id
                 regeneratingDayID = nil
             } catch {

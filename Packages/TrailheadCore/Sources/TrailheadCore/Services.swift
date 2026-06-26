@@ -84,7 +84,15 @@ public struct POICandidate: Identifiable, Hashable, Sendable {
 public protocol POIDataSource {
     func geocodeCity(_ name: String) async throws -> (adcode: String, center: (Double, Double))
     func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate]
-    func route(from: POICandidate, to: POICandidate, mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?)
+    /// `city` 为城市 adcode（公交路线 city1/city2 必填）；步行/驾车忽略。
+    func route(from: POICandidate, to: POICandidate, mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?)
+}
+
+public extension POIDataSource {
+    /// 便捷重载：不带 city（调用方无 adcode 时用，公交会退化为驾车，见 mode 选择）。
+    func route(from: POICandidate, to: POICandidate, mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
+        try await route(from: from, to: to, mode: mode, city: "")
+    }
 }
 
 /// Stub used until AmapClient lands (PDR T2.1–T2.5).
@@ -94,7 +102,7 @@ public struct StubPOISource: POIDataSource {
         ("STUB", (34.9956, 135.7741))
     }
     public func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate] { [] }
-    public func route(from: POICandidate, to: POICandidate, mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
+    public func route(from: POICandidate, to: POICandidate, mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         (15, 1200, nil)
     }
 }

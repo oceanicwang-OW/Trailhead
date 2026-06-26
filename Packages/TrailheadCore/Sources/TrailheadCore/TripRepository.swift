@@ -102,16 +102,18 @@ public struct TripRepository {
     }
 
     /// Delete one POI and rebuild transit rows between the remaining POIs.
-    public func deletePOI(_ item: PlanItem, from day: DayPlan, routeUsing source: POIDataSource) async throws {
+    /// `adcode` 用于公交路线 city；缺省（"")时远途退化为驾车。
+    public func deletePOI(_ item: PlanItem, from day: DayPlan,
+                          routeUsing source: POIDataSource, adcode: String = "") async throws {
         guard item.kind != .transit else { return }
         let remainingPOIs = day.sortedItems.filter { $0.kind != .transit && $0.id != item.id }
         context.delete(item)
-        try await rebuildDay(day, withPOIs: remainingPOIs, routeUsing: source)
+        try await rebuildDay(day, withPOIs: remainingPOIs, routeUsing: source, city: adcode)
     }
 
     /// Replace one POI and rebuild transit rows while preserving its schedule fields and position.
     public func replacePOI(_ item: PlanItem, with candidate: POICandidate,
-                           in day: DayPlan, routeUsing source: POIDataSource) async throws {
+                           in day: DayPlan, routeUsing source: POIDataSource, adcode: String = "") async throws {
         guard item.kind != .transit else { return }
         item.poiId = candidate.id
         item.name = candidate.name
@@ -120,7 +122,7 @@ public struct TripRepository {
         item.lat = candidate.lat
         item.lng = candidate.lng
         let orderedPOIs = day.sortedItems.filter { $0.kind != .transit }
-        try await rebuildDay(day, withPOIs: orderedPOIs, routeUsing: source)
+        try await rebuildDay(day, withPOIs: orderedPOIs, routeUsing: source, city: adcode)
     }
 
     /// Regenerate one existing day without changing the parent trip or other days.
@@ -140,7 +142,7 @@ public struct TripRepository {
         guard let stops = perDay.first, !stops.isEmpty else {
             throw ItineraryEngine.EngineError.emptyPlan
         }
-        let newItems = await ItineraryDayBuilder.buildItems(from: stops, source: source)
+        let newItems = await ItineraryDayBuilder.buildItems(from: stops, source: source, city: adcode)
 
         for old in day.items {
             context.delete(old)
@@ -155,7 +157,7 @@ public struct TripRepository {
 
 private extension TripRepository {
     func rebuildDay(_ day: DayPlan, withPOIs orderedPOIs: [PlanItem],
-                    routeUsing source: POIDataSource) async throws {
+                    routeUsing source: POIDataSource, city: String = "") async throws {
         var transitBeforePOI: [UUID: PlanItem] = [:]
         var previousCandidate: POICandidate?
         for poi in orderedPOIs {
@@ -164,8 +166,8 @@ private extension TripRepository {
                 continue
             }
             if let previousCandidate {
-                let mode = Self.mode(from: previousCandidate, to: candidate)
-                if let segment = try? await source.route(from: previousCandidate, to: candidate, mode: mode) {
+                let mode = Self.mode(from: previousCandidate, to: candidate, city: city)
+                if let segment = try? await source.route(from: previousCandidate, to: candidate, mode: mode, city: city) {
                     let transit = PlanItem(order: 0, kind: .transit)
                     transit.transitMode = mode
                     transit.transitDesc = mode.display
@@ -198,8 +200,9 @@ private extension TripRepository {
         try context.save()
     }
 
-    static func mode(from: POICandidate, to: POICandidate) -> TransitMode {
-        haversineMeters(from, to) > 1500 ? .metro : .walk
+    static func mode(from: POICandidate, to: POICandidate, city: String) -> TransitMode {
+        guard haversineMeters(from, to) > 1500 else { return .walk }
+        return city.isEmpty ? .drive : .metro
     }
 
     static func haversineMeters(_ a: POICandidate, _ b: POICandidate) -> Double {

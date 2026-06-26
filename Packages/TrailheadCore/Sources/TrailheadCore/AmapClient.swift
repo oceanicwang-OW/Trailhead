@@ -98,8 +98,9 @@ public struct AmapClient: POIDataSource {
     }
 
     /// 相邻两点路径规划。mode 决定端点：步行/驾车/公交。
+    /// 公交需 city（city1/city2 adcode）；缺省时退化为驾车，保证有交通段。
     public func route(from: POICandidate, to: POICandidate,
-                      mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
+                      mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         let origin = Self.lngLat(from), destination = Self.lngLat(to)
         switch mode {
         case .walk:
@@ -107,7 +108,10 @@ public struct AmapClient: POIDataSource {
         case .drive, .taxi:
             return try await pathRoute("/v5/direction/driving", origin, destination)
         case .metro, .bus, .train:
-            return try await transitRoute(origin, destination)
+            guard !city.isEmpty else {
+                return try await pathRoute("/v5/direction/driving", origin, destination)  // 无 city 退化驾车
+            }
+            return try await transitRoute(origin, destination, city: city)
         }
     }
 
@@ -147,10 +151,10 @@ public struct AmapClient: POIDataSource {
         return (minutes, meters, cost.flatMap { $0 > 0 ? $0 : nil })
     }
 
-    private func transitRoute(_ origin: String, _ destination: String) async throws
+    private func transitRoute(_ origin: String, _ destination: String, city: String) async throws
         -> (minutes: Int, meters: Int, cost: Int?) {
         let json = try await get("/v5/direction/transit/integrated", [
-            "origin": origin, "destination": destination, "city1": "", "city2": "",
+            "origin": origin, "destination": destination, "city1": city, "city2": city,
         ])
         guard let route = json["route"] as? [String: Any],
               let t = (route["transits"] as? [[String: Any]])?.first else { throw AmapError.emptyResult }

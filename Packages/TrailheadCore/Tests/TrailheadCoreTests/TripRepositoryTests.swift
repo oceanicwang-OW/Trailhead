@@ -19,7 +19,7 @@ private final class RouteSpySource: POIDataSource {
     }
 
     func route(from: POICandidate, to: POICandidate,
-               mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
+               mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         routeCalls.append((from.id, to.id, mode))
         if failingPairs.contains("\(from.id)-\(to.id)") {
             throw URLError(.cannotConnectToHost)
@@ -41,7 +41,7 @@ private final class RegenerateSpySource: POIDataSource {
     }
 
     func route(from: POICandidate, to: POICandidate,
-               mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
+               mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         routePairs.append("\(from.id)-\(to.id)")
         return (18, 1800, 8)
     }
@@ -205,13 +205,13 @@ final class TripRepositoryTests: XCTestCase {
         let day = DayPlan(dayIndex: 0, items: [a, transitAB, b, transitBC, c])
         try repo.create(city: "成都", days: [day])
 
-        try await repo.deletePOI(b, from: day, routeUsing: source)
+        try await repo.deletePOI(b, from: day, routeUsing: source, adcode: "510100")
 
         let sorted = day.sortedItems
         XCTAssertEqual(sorted.map(\.kind), [.sight, .transit, .sight])
         XCTAssertEqual(sorted.map(\.name), ["A", nil, "C"])
         XCTAssertEqual(sorted.map(\.order), [0, 1, 2])
-        XCTAssertEqual(sorted[1].transitMode, .metro)
+        XCTAssertEqual(sorted[1].transitMode, .metro)   // 有 adcode → 公交
         XCTAssertEqual(sorted[1].transitDesc, "地铁")
         XCTAssertEqual(sorted[1].transitMinutes, 22)
         XCTAssertEqual(sorted[1].transitMeters, 2600)

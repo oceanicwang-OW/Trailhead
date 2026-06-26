@@ -20,7 +20,7 @@ private final class SpyPOISource: POIDataSource {
     }
 
     func route(from: POICandidate, to: POICandidate,
-               mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
+               mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         (10, 1000, nil)
     }
 }

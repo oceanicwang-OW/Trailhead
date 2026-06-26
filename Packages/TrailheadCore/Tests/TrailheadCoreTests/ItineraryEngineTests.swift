@@ -12,6 +12,7 @@ private final class MockSource: POIDataSource {
     var byTag: [String: [POICandidate]] = [:]
     var routeResult: (minutes: Int, meters: Int, cost: Int?) = (15, 1200, nil)
     private(set) var routeCalls = 0
+    private(set) var lastRouteCity: String?
 
     func geocodeCity(_ name: String) async throws -> (adcode: String, center: (Double, Double)) {
         (adcode, (116.4, 39.9))
@@ -22,8 +23,9 @@ private final class MockSource: POIDataSource {
     }
 
     func route(from: POICandidate, to: POICandidate,
-               mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
+               mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         routeCalls += 1
+        lastRouteCity = city
         return routeResult
     }
 }
@@ -72,6 +74,8 @@ final class ItineraryEngineTests: XCTestCase {
         // 进度推进到完成
         XCTAssertEqual(engine.stage, .done)
         XCTAssertEqual(engine.progress, 1.0)
+        // 城市 adcode 已串进路由（公交 city1/city2 用）
+        XCTAssertEqual(source.lastRouteCity, "110100")
     }
 
     @MainActor
