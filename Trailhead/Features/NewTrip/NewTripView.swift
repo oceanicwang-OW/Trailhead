@@ -9,7 +9,7 @@ struct NewTripView: View {
     @Environment(\.dismiss) private var dismiss
     var onGenerate: (TripPrefs, String, Int) -> Void = { _, _, _ in }
 
-    @State private var destination = "关西，日本"
+    @State private var destination = "成都"
     @State private var days = 5
     @State private var selectedTags: Set<String> = ["美食", "历史古迹", "自然风光"]
     @State private var pace: Pace = .relaxed
@@ -58,16 +58,18 @@ struct NewTripView: View {
     }
 
     private var footer: some View {
-        Button {
+        let city = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Button {
             var p = TripPrefs(); p.tags = Array(selectedTags); p.pace = pace; p.budgetPerDay = Int(budget)
-            onGenerate(p, destination, days); dismiss()
+            onGenerate(p, city, days); dismiss()
         } label: {
             Text("生成行程")
                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
                 .frame(maxWidth: .infinity).frame(height: 44)
-                .background(Palette.green, in: RoundedRectangle(cornerRadius: 10))
+                .background(city.isEmpty ? Palette.textTertiary : Palette.green, in: RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .disabled(city.isEmpty)
         .padding(.horizontal, 28).padding(.vertical, 14)
     }
 
@@ -83,15 +85,14 @@ struct NewTripView: View {
             label("目的地")
             HStack(spacing: 11) {
                 Image(systemName: "mappin.and.ellipse").foregroundStyle(Palette.green)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(destination).font(Typo.cardTitle).foregroundStyle(Palette.textPrimary)
-                    Text("京都 · 大阪 · 奈良 · 已自动识别 3 座城市")
-                        .font(Typo.caption2).foregroundStyle(Palette.textSecondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Palette.textTertiary)
+                TextField("输入城市，如 成都 / 北京 / 西安", text: $destination)
+                    .textFieldStyle(.plain)
+                    .font(Typo.cardTitle)
+                    .foregroundStyle(Palette.textPrimary)
+                    .submitLabel(.done)
             }
             .fieldChrome()
+            Text("目前覆盖中国大陆城市（高德 POI）").font(Typo.caption2).foregroundStyle(Palette.textTertiary)
         }
     }
 
