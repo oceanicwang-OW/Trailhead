@@ -84,11 +84,16 @@ public struct POICandidate: Identifiable, Hashable, Sendable {
 public protocol POIDataSource {
     func geocodeCity(_ name: String) async throws -> (adcode: String, center: (Double, Double))
     func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate]
+    /// 按关键词召回 freeText 指定的具体地点；默认无实现（返回空）。
+    func searchPOI(keywords: String, adcode: String) async throws -> [POICandidate]
     /// `city` 为城市 adcode（公交路线 city1/city2 必填）；步行/驾车忽略。
     func route(from: POICandidate, to: POICandidate, mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?)
 }
 
 public extension POIDataSource {
+    /// 默认：不支持关键词召回的数据源返回空，不影响标签召回。
+    func searchPOI(keywords: String, adcode: String) async throws -> [POICandidate] { [] }
+
     /// 便捷重载：不带 city（调用方无 adcode 时用，公交会退化为驾车，见 mode 选择）。
     func route(from: POICandidate, to: POICandidate, mode: TransitMode) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         try await route(from: from, to: to, mode: mode, city: "")

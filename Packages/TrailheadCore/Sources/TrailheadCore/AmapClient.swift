@@ -26,10 +26,50 @@ public enum AmapCategory {
         "景点": "110000", "历史古迹": "110000", "自然风光": "110000", "风景": "110000",
         "住宿": "100000", "酒店": "100000",
         "购物": "060000",
-        "休闲娱乐": "080000", "娱乐": "080000",
+        "休闲娱乐": "080000", "娱乐": "080000", "夜生活": "080000", "动漫文化": "080000",
     ]
 
     public static func code(for tag: String) -> String { byTag[tag] ?? "110000" }
+
+    /// 类目码 → 规范类别名（与码 1:1），用于召回去重，避免同码 tag 多次回源。
+    static let canonicalByCode: [String: String] = [
+        "050000": "美食", "100000": "住宿", "110000": "景点",
+        "060000": "购物", "080000": "休闲娱乐",
+    ]
+
+    /// 把任意兴趣 tag 收敛到规范类别名（历史古迹/自然风光… → 景点）。
+    public static func canonicalCategory(for tag: String) -> String {
+        canonicalByCode[code(for: tag)] ?? "景点"
+    }
+
+    /// 规范类别 → 关键词搜索词。住宿用「酒店」更准；其余用类别名本身。
+    /// 关键词查询比类目码查询能稳定捞到高点评地标（types 默认序把冷门点排前）。
+    static let searchTermByCategory: [String: String] = [
+        "美食": "美食", "景点": "景点", "住宿": "酒店",
+        "购物": "购物", "休闲娱乐": "休闲娱乐",
+    ]
+
+    public static func searchTerm(for tag: String) -> String {
+        if let term = searchTermByCategory[tag] { return term }            // 规范类别（美食/景点/住宿…）
+        if byTag[tag] != nil { return searchTermByCategory[canonicalCategory(for: tag)] ?? tag }  // 已知兴趣 tag
+        return tag   // 菜系/住宿类型等自由词 → 原样作关键词（如「海鲜」「民宿」）
+    }
+
+    /// 召回类别集：吃住玩三支柱（美食/住宿/景点）必含，并入用户兴趣 tag 的规范类别，按码去重。
+    public static func recallCategories(forTags tags: [String]) -> [String] {
+        var set: Set<String> = ["美食", "住宿", "景点"]
+        for tag in tags { set.insert(canonicalCategory(for: tag)) }
+        return set.sorted()
+    }
+
+    /// 含口味/菜系与住宿类型的召回类别集：
+    /// 有菜系偏好则用菜系词替代通用「美食」；有住宿类型则用类型词替代通用「住宿」。
+    public static func recallCategories(for prefs: TripPrefs) -> [String] {
+        var set = Set(recallCategories(forTags: prefs.tags))
+        if !prefs.cuisines.isEmpty { set.remove("美食"); set.formUnion(prefs.cuisines) }
+        if !prefs.lodgingType.isEmpty { set.remove("住宿"); set.insert(prefs.lodgingType) }
+        return set.sorted()
+    }
 
     /// 高德 type 码（前两位大类）→ ItemKind。
     public static func kind(forTypeCode code: String) -> ItemKind {
@@ -39,6 +79,27 @@ public enum AmapCategory {
         case "11", "12": return .sight
         default:   return .sight
         }
+    }
+}
+
+// MARK: - 请求节流器（QPS 限速，PDR T8.2）
+
+/// 串行预约下一可发时刻：在 await 前同步占位，即使 actor 重入也能稳定限速。
+actor RateLimiter {
+    private let minIntervalNanos: UInt64
+    private var nextAllowedNanos: UInt64 = 0
+
+    init(minInterval: TimeInterval) {
+        minIntervalNanos = UInt64((minInterval * 1_000_000_000).rounded())
+    }
+
+    func acquire() async {
+        guard minIntervalNanos > 0 else { return }
+        let now = DispatchTime.now().uptimeNanoseconds
+        let scheduled = max(now, nextAllowedNanos)
+        nextAllowedNanos = scheduled + minIntervalNanos      // 同步占位，先于 await
+        let delay = scheduled - now
+        if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
     }
 }
 
@@ -54,16 +115,27 @@ public struct AmapClient: POIDataSource {
         "10045",  // USER_ABROAD_DAILY_QUERY_OVER_LIMIT
     ]
 
+    /// 单类目最多翻几页（page_size=25）。3 页 → 候选池 ~75，招牌景点更易进池。
+    static let pageSize = 25
+
     private let base = URL(string: "https://restapi.amap.com")!
     private let session: URLSession
     private let keyProvider: () -> String?
     private let onCall: (() -> Void)?
+    private let pagesPerCategory: Int
+    private let limiter: RateLimiter
 
+    /// `minRequestInterval`：相邻请求最小间隔，节流到个人 key 的 QPS 以下（默认 0.35s ≈ <3/s），
+    /// 避免一次生成连发十几个请求触发高德限速（10004/10019）。测试可传 0 关闭。
     public init(session: URLSession = .shared,
                 keyProvider: @escaping () -> String? = { KeychainStore.get(KeychainStore.Account.amap) },
+                pagesPerCategory: Int = 3,
+                minRequestInterval: TimeInterval = 0.35,
                 onCall: (() -> Void)? = nil) {
         self.session = session
         self.keyProvider = keyProvider
+        self.pagesPerCategory = max(1, pagesPerCategory)
+        self.limiter = RateLimiter(minInterval: max(0, minRequestInterval))
         self.onCall = onCall
     }
 
@@ -82,20 +154,42 @@ public struct AmapClient: POIDataSource {
         return (adcode, center)
     }
 
-    /// 按兴趣 tag 召回候选（去重）。/v5/place/text，show_fields=business 拿评分/营业。
+    /// 按兴趣 tag 召回候选（去重）。改用「关键词搜索」而非类目码：
+    /// types 查询默认序把冷门点排前、招牌景点常漏召；keywords 查询按热度/相关性返回，
+    /// 能稳定捞到高点评地标（PDR §12.1 修订）。每词翻 `pagesPerCategory` 页扩大候选池，
+    /// 某页不足一页即停。show_fields=business 拿评分/营业。
     public func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate] {
-        let codes = tags.isEmpty ? ["110000"] : Set(tags.map(AmapCategory.code)).sorted()
+        let terms = tags.isEmpty ? ["景点"] : Set(tags.map(AmapCategory.searchTerm)).sorted()
         var seen = Set<String>()
         var out: [POICandidate] = []
-        for code in codes {
-            let json = try await get("/v5/place/text", [
-                "types": code, "region": adcode, "city_limit": "true",
-                "show_fields": "business", "page_size": "25",
-            ])
-            for poi in (json["pois"] as? [[String: Any]] ?? []) {
-                guard let candidate = Self.parsePOI(poi), seen.insert(candidate.id).inserted else { continue }
-                out.append(candidate)
+        for term in terms {
+            for page in 1...pagesPerCategory {
+                let json = try await get("/v5/place/text", [
+                    "keywords": term, "region": adcode, "city_limit": "true",
+                    "show_fields": "business", "page_size": "\(Self.pageSize)", "page_num": "\(page)",
+                ])
+                let pois = json["pois"] as? [[String: Any]] ?? []
+                for poi in pois {
+                    guard let candidate = Self.parsePOI(poi), seen.insert(candidate.id).inserted else { continue }
+                    out.append(candidate)
+                }
+                if pois.count < Self.pageSize { break }   // 最后一页，停
             }
+        }
+        return out
+    }
+
+    /// 按关键词召回（freeText 指定的具体地点，如「鼓浪屿」）。不限类目，单页即可。
+    public func searchPOI(keywords: String, adcode: String) async throws -> [POICandidate] {
+        let json = try await get("/v5/place/text", [
+            "keywords": keywords, "region": adcode, "city_limit": "true",
+            "show_fields": "business", "page_size": "\(Self.pageSize)",
+        ])
+        var seen = Set<String>()
+        var out: [POICandidate] = []
+        for poi in (json["pois"] as? [[String: Any]] ?? []) {
+            guard let candidate = Self.parsePOI(poi), seen.insert(candidate.id).inserted else { continue }
+            out.append(candidate)
         }
         return out
     }
@@ -126,6 +220,7 @@ public struct AmapClient: POIDataSource {
         comps.queryItems = (query.merging(["key": key, "output": "json"]) { a, _ in a })
             .sorted { $0.key < $1.key }
             .map { URLQueryItem(name: $0.key, value: $0.value) }
+        await limiter.acquire()   // QPS 节流：相邻请求间隔不小于 minRequestInterval
         let (data, _) = try await session.data(from: comps.url!)
         onCall?()   // 计一次高德调用（PDR T7.2）
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {

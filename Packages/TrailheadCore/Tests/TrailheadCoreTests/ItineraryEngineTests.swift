@@ -47,6 +47,11 @@ final class ItineraryEngineTests: XCTestCase {
         POICandidate(id: id, name: id, kind: kind, subtype: "", lat: lat, lng: lng)
     }
 
+    private func hotel(_ id: String, rating: Double) -> POICandidate {
+        POICandidate(id: id, name: id, kind: .lodging, subtype: "", lat: 24.4, lng: 118.0,
+                     rating: rating, avgPrice: 500)
+    }
+
     @MainActor
     func testGenerateEndToEndPersistsTrip() async throws {
         let ctx = try TestSupport.makeContext()
@@ -118,6 +123,28 @@ final class ItineraryEngineTests: XCTestCase {
         // 每天 2 POI → 1 段交通；共 2 次 route 调用
         XCTAssertEqual(source.routeCalls, 2)
         XCTAssertEqual(trip.sortedDays[0].sortedItems.filter { $0.kind == .transit }.count, 1)
+    }
+
+    @MainActor
+    func testLodgingSplitOutOfItineraryIntoShortlist() async throws {
+        let ctx = try TestSupport.makeContext()
+        let source = MockSource()
+        source.byTag = [
+            "景点": [cand("S1", .sight)],
+            "美食": [cand("F1", .food)],
+            "住宿": [hotel("H1", rating: 4.8), hotel("H2", rating: 4.5)],
+        ]
+        // LLM 即便误引用住宿 H1，因其不在行程候选里也会被丢弃。
+        let llm = MockLLM([#"{"days":[{"day":1,"items":[{"poi_id":"S1"},{"poi_id":"F1"},{"poi_id":"H1"}]}]}"#])
+        let engine = ItineraryEngine(source: source, llm: llm, context: ctx)
+
+        let trip = try await engine.generate(destination: "厦门", prefs: TripPrefs(tags: ["美食"]), days: 1)
+
+        let poiIDs = trip.sortedDays[0].sortedItems.compactMap(\.poiId)
+        XCTAssertFalse(poiIDs.contains("H1"))                       // 住宿不进每日动线
+        XCTAssertEqual(Set(poiIDs), ["S1", "F1"])
+        XCTAssertEqual(trip.lodgingOptions.map(\.id), ["H1", "H2"]) // 按评分降序成清单
+        XCTAssertEqual(trip.lodgingOptions.first?.rating, 4.8)
     }
 
     @MainActor

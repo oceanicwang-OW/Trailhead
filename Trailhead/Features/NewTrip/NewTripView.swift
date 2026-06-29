@@ -7,16 +7,22 @@ import TrailheadCore
 
 struct NewTripView: View {
     @Environment(\.dismiss) private var dismiss
-    var onGenerate: (TripPrefs, String, Int) -> Void = { _, _, _ in }
+    var onGenerate: (TripPrefs, String, Int, Date) -> Void = { _, _, _, _ in }
 
     @State private var destination = "成都"
     @State private var days = 5
+    @State private var startDate = Calendar.current.startOfDay(for: .now)
     @State private var selectedTags: Set<String> = ["美食", "历史古迹", "自然风光"]
+    @State private var selectedCuisines: Set<String> = []
+    @State private var lodgingType = ""        // "" = 不限
     @State private var pace: Pace = .relaxed
     @State private var budget: Double = 600
 
     private let allTags = ["美食", "历史古迹", "自然风光", "温泉", "购物",
                            "动漫文化", "夜生活", "亲子", "摄影"]
+    private let allCuisines = ["本地特色", "海鲜", "火锅", "烧烤", "小吃",
+                               "川菜", "粤菜", "湘菜", "日料", "西餐", "素食"]
+    private let allLodging = ["民宿", "经济型酒店", "豪华酒店", "青年旅舍", "度假酒店"]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +32,8 @@ struct NewTripView: View {
                     destinationField
                     HStack(alignment: .top, spacing: 14) { dateField; daysStepper }
                     tagsSection
+                    cuisineSection
+                    lodgingSection
                     paceSection
                     budgetSection
                 }
@@ -61,7 +69,8 @@ struct NewTripView: View {
         let city = destination.trimmingCharacters(in: .whitespacesAndNewlines)
         return Button {
             var p = TripPrefs(); p.tags = Array(selectedTags); p.pace = pace; p.budgetPerDay = Int(budget)
-            onGenerate(p, city, days); dismiss()
+            p.cuisines = Array(selectedCuisines); p.lodgingType = lodgingType
+            onGenerate(p, city, days, startDate); dismiss()
         } label: {
             Text("生成行程")
                 .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
@@ -98,15 +107,25 @@ struct NewTripView: View {
 
     private var dateField: some View {
         VStack(alignment: .leading, spacing: 8) {
-            label("出发 – 返程")
+            label("出发日期")
             HStack(spacing: 10) {
                 Image(systemName: "calendar").foregroundStyle(Palette.textMuted)
-                Text("10月12日 – 10月16日").font(.system(size: 14.5, weight: .medium))
-                    .foregroundStyle(Palette.textPrimary)
+                DatePicker("", selection: $startDate, in: Calendar.current.startOfDay(for: .now)...,
+                           displayedComponents: .date)
+                    .labelsHidden()
+                    .datePickerStyle(.compact)
                 Spacer()
             }
             .fieldChrome()
+            Text(returnDateText).font(Typo.caption2).foregroundStyle(Palette.textTertiary)
         }
+    }
+
+    private var returnDateText: String {
+        let cal = Calendar.current
+        let end = cal.date(byAdding: .day, value: max(0, days - 1), to: startDate) ?? startDate
+        let f = DateFormatter(); f.locale = Locale(identifier: "zh_CN"); f.dateFormat = "M月d日"
+        return "返程 \(f.string(from: end)) · 共 \(days) 天"
     }
 
     private var daysStepper: some View {
@@ -153,6 +172,45 @@ struct NewTripView: View {
                 }
             }
         }
+    }
+
+    private var cuisineSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            label("口味 / 菜系（影响美食推荐）")
+            FlowLayout(spacing: 9) {
+                ForEach(allCuisines, id: \.self) { c in
+                    chip(c, on: selectedCuisines.contains(c)) {
+                        if selectedCuisines.contains(c) { selectedCuisines.remove(c) }
+                        else { selectedCuisines.insert(c) }
+                    }
+                }
+            }
+        }
+    }
+
+    private var lodgingSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            label("住宿类型（影响住宿推荐）")
+            FlowLayout(spacing: 9) {
+                chip("不限", on: lodgingType.isEmpty) { lodgingType = "" }
+                ForEach(allLodging, id: \.self) { t in
+                    chip(t, on: lodgingType == t) { lodgingType = (lodgingType == t ? "" : t) }
+                }
+            }
+        }
+    }
+
+    /// 统一胶囊选项样式（兴趣偏好/菜系/住宿共用）。
+    private func chip(_ text: String, on: Bool, _ action: @escaping () -> Void) -> some View {
+        HStack(spacing: 5) {
+            if on { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)) }
+            Text(text).font(.system(size: 13, weight: on ? .semibold : .medium))
+        }
+        .foregroundStyle(on ? .white : Palette.textPrimary)
+        .padding(.vertical, 8).padding(.horizontal, 13)
+        .background(on ? Palette.green : Palette.fieldBG, in: Capsule())
+        .contentShape(Capsule())
+        .onTapGesture(perform: action)
     }
 
     private var paceSection: some View {

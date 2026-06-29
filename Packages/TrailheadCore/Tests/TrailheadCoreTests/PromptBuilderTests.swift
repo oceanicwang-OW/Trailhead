@@ -30,4 +30,13 @@ final class PromptBuilderTests: XCTestCase {
         XCTAssertTrue(user.contains("美食"))            // 偏好标签
         XCTAssertTrue(user.contains("600"))            // 预算
     }
+
+    func testUserPromptRanksHigherRatedFirst() {
+        let low = POICandidate(id: "LOW", name: "无名小点", kind: .sight, subtype: "", lat: 24.4, lng: 118.0, rating: 3.2)
+        let high = POICandidate(id: "HIGH", name: "鼓浪屿", kind: .sight, subtype: "", lat: 24.4, lng: 118.0, rating: 4.9)
+        let user = PromptBuilder.userPrompt(prefs: TripPrefs(), candidates: [low, high], days: 2)
+        let hiPos = try! XCTUnwrap(user.range(of: "poi_id=HIGH")).lowerBound
+        let loPos = try! XCTUnwrap(user.range(of: "poi_id=LOW")).lowerBound
+        XCTAssertTrue(hiPos < loPos)                   // 高评分排在前
+    }
 }
