@@ -21,6 +21,13 @@ private final class SpyPOISource: POIDataSource {
         return tags.flatMap { byCategory[$0] ?? [] }
     }
 
+    private(set) var keywordCalls: [String] = []
+    var byKeyword: [String: [POICandidate]] = [:]
+    func searchPOI(keywords: String, adcode: String) async throws -> [POICandidate] {
+        keywordCalls.append(keywords)
+        return byKeyword[keywords] ?? []
+    }
+
     func route(from: POICandidate, to: POICandidate,
                mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         (10, 1000, nil)
@@ -101,6 +108,35 @@ final class POIRecallTests: XCTestCase {
         let result = try await recall.recall(adcode: "110100", tags: ["美食"])
         XCTAssertEqual(result.map(\.id), ["F1"])     // 命中缓存
         XCTAssertEqual(spy.searchCalls.count, 0)     // 未触达数据源（不会抛配额错误）
+    }
+
+    func testFreeTextKeywordsInjectedFirstAndCached() async throws {
+        let spy = SpyPOISource()
+        spy.byKeyword = ["鼓浪屿": [candidate("GLY")]]
+        spy.byCategory = ["美食": [candidate("F1")]]
+        let cache = POICache(context: try TestSupport.makeContext())
+        let recall = POIRecall(source: spy, cache: cache)
+
+        let result = try await recall.recall(adcode: "350200", tags: ["美食"], freeText: "我想去鼓浪屿")
+
+        XCTAssertEqual(result.map(\.id), ["GLY", "F1"])       // 关键词命中排在标签召回前
+        XCTAssertEqual(spy.keywordCalls, ["鼓浪屿"])           // 剥掉「我想去」前缀
+        XCTAssertEqual(try cache.fetch(adcode: "350200", category: "kw:鼓浪屿")?.count, 1)  // 已缓存
+
+        _ = try await recall.recall(adcode: "350200", tags: ["美食"], freeText: "我想去鼓浪屿")
+        XCTAssertEqual(spy.keywordCalls.count, 1)             // 二次走缓存，0 次网络
+    }
+
+    func testFreeTextKeywordDedupesAgainstTagRecall() async throws {
+        let spy = SpyPOISource()
+        spy.byKeyword = ["厦门大学": [candidate("XMU")]]
+        spy.byCategory = ["历史古迹": [candidate("XMU"), candidate("B")]]  // 同 id 也出现在标签召回
+        let cache = POICache(context: try TestSupport.makeContext())
+        let recall = POIRecall(source: spy, cache: cache)
+
+        let result = try await recall.recall(adcode: "350200", tags: ["历史古迹"], freeText: "厦门大学")
+
+        XCTAssertEqual(result.map(\.id), ["XMU", "B"])        // XMU 只出现一次，且在前
     }
 
     func testDifferentCityDoesNotHitOtherCityCache() async throws {

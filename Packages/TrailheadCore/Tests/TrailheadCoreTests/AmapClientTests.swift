@@ -11,7 +11,7 @@ import XCTest
 final class AmapClientTests: XCTestCase {
 
     private func makeClient(key: String? = "TESTKEY") -> AmapClient {
-        AmapClient(session: TestSupport.mockSession(), keyProvider: { key })
+        AmapClient(session: TestSupport.mockSession(), keyProvider: { key }, minRequestInterval: 0)
     }
 
     private func queryValue(_ name: String, in req: URLRequest) -> String? {
@@ -55,7 +55,7 @@ final class AmapClientTests: XCTestCase {
         XCTAssertEqual(p.avgPrice, 60)
 
         XCTAssertEqual(MockURLProtocol.requests.first?.url?.path, "/v5/place/text")
-        XCTAssertEqual(queryValue("types", in: MockURLProtocol.requests.first!), "110000")
+        XCTAssertEqual(queryValue("keywords", in: MockURLProtocol.requests.first!), "景点")   // 历史古迹→景点 关键词
         XCTAssertEqual(queryValue("region", in: MockURLProtocol.requests.first!), "110000")
     }
 
@@ -71,13 +71,55 @@ final class AmapClientTests: XCTestCase {
     }
 
     func testSearchPOIMapsTagsAndDedupes() async throws {
-        // 两个 tag → 两个类目码 → 两次请求；同 id 去重为 1。
+        // 两个 tag → 两个关键词 → 两次请求；同 id 去重为 1。
         MockURLProtocol.stub(#"{"status":"1","info":"OK","infocode":"10000","pois":[{"id":"DUP","name":"X","location":"116.4,39.9","type":"a;b","typecode":"110000"}]}"#)
         let pois = try await makeClient().searchPOI(adcode: "110000", tags: ["美食", "历史古迹"])
 
         XCTAssertEqual(pois.count, 1)             // 去重
-        let types = MockURLProtocol.requests.compactMap { queryValue("types", in: $0) }.sorted()
-        XCTAssertEqual(types, ["050000", "110000"])   // tag→类目映射
+        let keywords = MockURLProtocol.requests.compactMap { queryValue("keywords", in: $0) }.sorted()
+        XCTAssertEqual(keywords, ["景点", "美食"])   // 美食→美食、历史古迹→景点 关键词
+    }
+
+    func testSearchPOIPaginatesUntilShortPage() async throws {
+        // 满页(25)→继续翻页；不足一页→停。pagesPerCategory=3 但第 2 页就短，应只发 2 次请求。
+        let fullPage = Self.poisJSON(count: AmapClient.pageSize, prefix: "P1_")   // 第 1 页：25 个
+        let shortPage = Self.poisJSON(count: 3, prefix: "P2_")                    // 第 2 页：3 个 → 停
+        MockURLProtocol.stubSequence([(200, fullPage), (200, shortPage)])
+
+        let client = AmapClient(session: TestSupport.mockSession(),
+                                keyProvider: { "TESTKEY" }, pagesPerCategory: 3, minRequestInterval: 0)
+        let pois = try await client.searchPOI(adcode: "350200", tags: ["历史古迹"])
+
+        XCTAssertEqual(pois.count, AmapClient.pageSize + 3)        // 两页合并
+        XCTAssertEqual(MockURLProtocol.requests.count, 2)         // 短页后停，未发第 3 页
+        let pageNums = MockURLProtocol.requests.compactMap { queryValue("page_num", in: $0) }
+        XCTAssertEqual(pageNums, ["1", "2"])
+    }
+
+    func testRecallCategoriesAlwaysIncludesThreePillars() {
+        // 用户只选美食 → 仍补齐住宿/景点；历史古迹/自然风光归一到景点，按码去重。
+        XCTAssertEqual(AmapCategory.recallCategories(forTags: ["美食"]), ["住宿", "景点", "美食"])
+        XCTAssertEqual(AmapCategory.recallCategories(forTags: ["历史古迹", "自然风光"]), ["住宿", "景点", "美食"])
+        XCTAssertEqual(AmapCategory.recallCategories(forTags: ["夜生活"]),
+                       ["休闲娱乐", "住宿", "景点", "美食"])
+        XCTAssertEqual(AmapCategory.canonicalCategory(for: "历史古迹"), "景点")
+    }
+
+    func testRecallCategoriesUsesCuisineAndLodgingType() {
+        // 有菜系 → 用菜系替代「美食」；有住宿类型 → 替代「住宿」。
+        var prefs = TripPrefs(tags: ["美食"])
+        prefs.cuisines = ["海鲜", "火锅"]
+        prefs.lodgingType = "民宿"
+        XCTAssertEqual(AmapCategory.recallCategories(for: prefs), ["景点", "民宿", "海鲜", "火锅"])
+        // 自由词原样作关键词（不被误判成景点）。
+        XCTAssertEqual(AmapCategory.searchTerm(for: "海鲜"), "海鲜")
+        XCTAssertEqual(AmapCategory.searchTerm(for: "民宿"), "民宿")
+        XCTAssertEqual(AmapCategory.searchTerm(for: "住宿"), "酒店")
+    }
+
+    func testRecallCategoriesDefaultsWhenNoCuisineOrLodging() {
+        XCTAssertEqual(AmapCategory.recallCategories(for: TripPrefs(tags: ["美食"])),
+                       ["住宿", "景点", "美食"])
     }
 
     // T2.3 ---------------------------------------------------------------
@@ -144,6 +186,14 @@ final class AmapClientTests: XCTestCase {
 
     private func poi(_ id: String) -> POICandidate {
         POICandidate(id: id, name: id, kind: .sight, subtype: "", lat: 39.9, lng: 116.4)
+    }
+
+    /// 构造含 `count` 个唯一 POI 的 /v5/place/text 响应体。
+    private static func poisJSON(count: Int, prefix: String) -> String {
+        let items = (0..<count).map {
+            #"{"id":"\#(prefix)\#($0)","name":"地点\#($0)","location":"118.0,24.4","type":"风景名胜;公园","typecode":"110000"}"#
+        }.joined(separator: ",")
+        return #"{"status":"1","info":"OK","infocode":"10000","pois":[\#(items)]}"#
     }
 
     private func assertThrows(_ expected: AmapError, _ body: () async throws -> Void,

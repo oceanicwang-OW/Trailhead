@@ -20,9 +20,10 @@ public struct TripRepository {
     public func create(city: String, subtitle: String = "", adcode: String = "",
                        startDate: Date = .now, nights: Int = 3, prefs: TripPrefs = .init(),
                        status: TripStatus = .draft, accentSeed: Int = 0,
-                       days: [DayPlan] = []) throws -> Trip {
+                       days: [DayPlan] = [], lodging: [LodgingOption] = []) throws -> Trip {
         let trip = Trip(city: city, subtitle: subtitle, adcode: adcode, startDate: startDate,
-                        nights: nights, prefs: prefs, status: status, accentSeed: accentSeed, days: days)
+                        nights: nights, prefs: prefs, status: status, accentSeed: accentSeed,
+                        days: days, lodging: lodging)
         context.insert(trip)
         try context.save()
         return trip
@@ -136,11 +137,16 @@ public struct TripRepository {
         guard !adcode.isEmpty else { throw TripRepositoryError.missingAdcode }
 
         let recall = POIRecall(source: source, cache: POICache(context: context))
-        let candidates = try await recall.recall(adcode: adcode, tags: trip.prefs.tags)
-        guard !candidates.isEmpty else { throw ItineraryEngine.EngineError.noCandidates }
+        let categories = AmapCategory.recallCategories(for: trip.prefs)
+        let candidates = try await recall.recall(adcode: adcode, tags: categories, freeText: trip.prefs.freeText)
+        // 住宿单独成清单；行程候选走确定性筛选（点评分 + 偏好加权 + 点名豁免，与整趟生成同规则）。
+        let pinned = ItineraryEngine.pinnedIDs(in: candidates, freeText: trip.prefs.freeText)
+        let itineraryCandidates = CandidateCuration.curate(candidates.filter { $0.kind != .lodging },
+                                                           tags: trip.prefs.tags, pinned: pinned)
+        guard !itineraryCandidates.isEmpty else { throw ItineraryEngine.EngineError.noCandidates }
 
         let perDay = try await ItineraryDayBuilder.planStops(prefs: trip.prefs,
-                                                             candidates: candidates,
+                                                             candidates: itineraryCandidates,
                                                              days: 1,
                                                              llm: llm)
         guard let stops = perDay.first, !stops.isEmpty else {
@@ -155,6 +161,8 @@ public struct TripRepository {
         for (index, item) in day.sortedItems.enumerated() {
             item.order = index
         }
+        day.foodOptions = ItineraryEngine.nearbyFood(forItems: newItems,
+                                                     foodPool: candidates.filter { $0.kind == .food })
         try context.save()
     }
 }

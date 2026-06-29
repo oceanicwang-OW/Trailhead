@@ -17,8 +17,14 @@ public struct POICache {
         self.ttl = ttl
     }
 
+    /// 召回逻辑版本号。改了召回算法（类目→关键词、归一、筛选等）就 +1，
+    /// 旧缓存键自动失效、不再命中——无需用户手动「清除离线缓存」。
+    static let schema = "v2"
+    static func scoped(_ category: String) -> String { "\(schema):\(category)" }
+
     /// 写入/更新一批候选（按 adcode + category）。同键覆盖并刷新时间戳。
-    public func store(_ candidates: [POICandidate], adcode: String, category: String, at date: Date = .now) throws {
+    public func store(_ candidates: [POICandidate], adcode: String, category rawCategory: String, at date: Date = .now) throws {
+        let category = Self.scoped(rawCategory)
         for candidate in candidates {
             let key = CachedPOI.makeKey(adcode: adcode, category: category, poiId: candidate.id)
             try deleteByKey(key)   // upsert：先删旧再插新，规避 unique 冲突
@@ -28,8 +34,8 @@ public struct POICache {
     }
 
     /// 命中未过期缓存则返回候选；无有效缓存返回 `nil`（区别于"命中但为空"）。
-    public func fetch(adcode: String, category: String, now: Date = .now) throws -> [POICandidate]? {
-        let fresh = try rows(adcode: adcode, category: category).filter { !$0.isExpired(ttl: ttl, now: now) }
+    public func fetch(adcode: String, category rawCategory: String, now: Date = .now) throws -> [POICandidate]? {
+        let fresh = try rows(adcode: adcode, category: Self.scoped(rawCategory)).filter { !$0.isExpired(ttl: ttl, now: now) }
         return fresh.isEmpty ? nil : fresh.map(\.candidate)
     }
 

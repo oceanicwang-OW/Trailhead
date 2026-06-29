@@ -8,10 +8,20 @@ import MapKit
 import SwiftUI
 import TrailheadCore
 
+/// 地图焦点：点击美食/住宿卡片时定位的目标（这些点不在每日动线标注里）。
+struct MapFocus: Equatable {
+    let id: String
+    let name: String
+    let lat: Double
+    let lng: Double
+    let kind: ItemKind   // food / lodging → 针的图标与配色
+}
+
 struct MapInspector: View {
     let trip: Trip
     let dayIndex: Int
     @Binding var selectedItemID: UUID?
+    @Binding var mapFocus: MapFocus?
 
     @State private var camera: MapCameraPosition = .region(
         MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 34.9956, longitude: 135.7741),
@@ -38,11 +48,61 @@ struct MapInspector: View {
                         }
                     }
                 }
+                if let f = mapFocus {
+                    Annotation(f.name, coordinate: .init(latitude: f.lat, longitude: f.lng)) {
+                        focusPin(f)
+                    }
+                }
             }
             .mapStyle(.standard(elevation: .flat))
 
             if let item = selectedPOI { detailCard(item).padding(14) }
         }
+        // 地图跟随行程：切换行程或天数时，自动定位到当天 POI 的范围（并清掉旧焦点）。
+        .onAppear { recenter(animated: false) }
+        .onChange(of: trip.id) { mapFocus = nil; recenter() }
+        .onChange(of: dayIndex) { mapFocus = nil; recenter() }
+        // 点击美食/住宿卡片：飞到该点。
+        .onChange(of: mapFocus) { _, f in if let f { focusCamera(f) } }
+    }
+
+    /// 飞到焦点点（近景）。
+    private func focusCamera(_ f: MapFocus) {
+        withAnimation(.easeInOut(duration: 0.45)) {
+            camera = .region(MKCoordinateRegion(
+                center: .init(latitude: f.lat, longitude: f.lng),
+                span: MKCoordinateSpan(latitudeDelta: 0.018, longitudeDelta: 0.018)))
+        }
+    }
+
+    private func focusPin(_ f: MapFocus) -> some View {
+        Image(systemName: f.kind == .food ? "fork.knife" : "bed.double.fill")
+            .font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
+            .frame(width: 30, height: 30)
+            .background(f.kind.color, in: Circle())
+            .overlay(Circle().stroke(.white, lineWidth: 2.5))
+            .shadow(radius: 3, y: 1)
+    }
+
+    /// 把相机移到当天所有 POI 的外接区域（无坐标则不动）。
+    private func recenter(animated: Bool = true) {
+        let coords = pois.compactMap(coord)
+        guard let region = Self.region(for: coords) else { return }
+        if animated { withAnimation(.easeInOut(duration: 0.45)) { camera = .region(region) } }
+        else { camera = .region(region) }
+    }
+
+    /// 外接所有坐标并留出边距的区域。
+    static func region(for coords: [CLLocationCoordinate2D]) -> MKCoordinateRegion? {
+        guard !coords.isEmpty else { return nil }
+        let lats = coords.map(\.latitude), lngs = coords.map(\.longitude)
+        let minLat = lats.min()!, maxLat = lats.max()!
+        let minLng = lngs.min()!, maxLng = lngs.max()!
+        let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2,
+                                            longitude: (minLng + maxLng) / 2)
+        let span = MKCoordinateSpan(latitudeDelta: max(0.02, (maxLat - minLat) * 1.5),
+                                    longitudeDelta: max(0.02, (maxLng - minLng) * 1.5))
+        return MKCoordinateRegion(center: center, span: span)
     }
 
     private var selectedPOI: PlanItem? {

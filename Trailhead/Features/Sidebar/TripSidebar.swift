@@ -10,6 +10,7 @@ struct TripSidebar: View {
     let trips: [Trip]
     @Binding var selection: Trip?
     var onNewTrip: () -> Void = {}
+    var onDelete: (Trip) -> Void = { _ in }
 
     private var upcoming: [Trip] { trips.filter { $0.status == .ready || $0.status == .generating } }
     private var drafts:   [Trip] { trips.filter { $0.status == .draft } }
@@ -39,6 +40,11 @@ struct TripSidebar: View {
             row(trip).opacity(dimmed ? 0.62 : 1)
                 .contentShape(Rectangle())
                 .onTapGesture { selection = trip }
+                .contextMenu {
+                    Button(role: .destructive) { onDelete(trip) } label: {
+                        Label("删除行程", systemImage: "trash")
+                    }
+                }
         }
     }
 

@@ -55,13 +55,68 @@ public struct TripPrefs: Codable, Hashable, Sendable {
     public var pace: Pace
     public var budgetPerDay: Int
     public var freeText: String
+    public var cuisines: [String]      // 口味/菜系偏好（用作美食召回关键词）
+    public var lodgingType: String     // 住宿类型（用作住宿召回关键词；""=不限）
 
     public init(tags: [String] = [], pace: Pace = .relaxed,
-                budgetPerDay: Int = 600, freeText: String = "") {
+                budgetPerDay: Int = 600, freeText: String = "",
+                cuisines: [String] = [], lodgingType: String = "") {
         self.tags = tags
         self.pace = pace
         self.budgetPerDay = budgetPerDay
         self.freeText = freeText
+        self.cuisines = cuisines
+        self.lodgingType = lodgingType
+    }
+
+    enum CodingKeys: String, CodingKey { case tags, pace, budgetPerDay, freeText, cuisines, lodgingType }
+
+    /// 容错解码：老 Trip 的 prefsData 没有新字段，缺失即取默认，不丢失旧偏好。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        pace = try c.decodeIfPresent(Pace.self, forKey: .pace) ?? .relaxed
+        budgetPerDay = try c.decodeIfPresent(Int.self, forKey: .budgetPerDay) ?? 600
+        freeText = try c.decodeIfPresent(String.self, forKey: .freeText) ?? ""
+        cuisines = try c.decodeIfPresent([String].self, forKey: .cuisines) ?? []
+        lodgingType = try c.decodeIfPresent(String.self, forKey: .lodgingType) ?? ""
+    }
+}
+
+// MARK: - Nearby food shortlist (Codable, embedded on DayPlan)
+
+/// 当天行程附近的美食推荐（按就近 + 评分排序，供用户自选，不排进动线）。
+public struct FoodOption: Codable, Hashable, Sendable, Identifiable {
+    public var id: String          // amap poi id
+    public var name: String
+    public var rating: Double?
+    public var avgPrice: Int?
+    public var subtype: String     // 菜系/类型，如「海鲜」「火锅」
+    public var lat: Double
+    public var lng: Double
+
+    public init(id: String, name: String, rating: Double? = nil, avgPrice: Int? = nil,
+                subtype: String = "", lat: Double, lng: Double) {
+        self.id = id; self.name = name; self.rating = rating
+        self.avgPrice = avgPrice; self.subtype = subtype; self.lat = lat; self.lng = lng
+    }
+}
+
+// MARK: - Lodging shortlist (Codable, embedded on Trip)
+
+/// 住宿候选（不排进每日动线，单独成清单供用户自选）。
+public struct LodgingOption: Codable, Hashable, Sendable, Identifiable {
+    public var id: String          // amap poi id
+    public var name: String
+    public var rating: Double?
+    public var avgPrice: Int?
+    public var lat: Double
+    public var lng: Double
+
+    public init(id: String, name: String, rating: Double? = nil,
+                avgPrice: Int? = nil, lat: Double, lng: Double) {
+        self.id = id; self.name = name; self.rating = rating
+        self.avgPrice = avgPrice; self.lat = lat; self.lng = lng
     }
 }
 
@@ -76,6 +131,7 @@ public final class Trip {
     public var startDate: Date
     public var nights: Int
     public var prefsData: Data           // encoded TripPrefs
+    public var lodgingData: Data = Data()  // encoded [LodgingOption]（住宿候选清单）
     public var statusRaw: String
     public var accentSeed: Int           // chooses the sidebar gradient swatch
     public var createdAt: Date
@@ -83,7 +139,8 @@ public final class Trip {
 
     public init(id: UUID = UUID(), city: String, subtitle: String = "", adcode: String = "",
                 startDate: Date = .now, nights: Int = 3, prefs: TripPrefs = .init(),
-                status: TripStatus = .draft, accentSeed: Int = 0, days: [DayPlan] = []) {
+                status: TripStatus = .draft, accentSeed: Int = 0, days: [DayPlan] = [],
+                lodging: [LodgingOption] = []) {
         self.id = id
         self.city = city
         self.subtitle = subtitle
@@ -91,6 +148,7 @@ public final class Trip {
         self.startDate = startDate
         self.nights = nights
         self.prefsData = (try? JSONEncoder().encode(prefs)) ?? Data()
+        self.lodgingData = (try? JSONEncoder().encode(lodging)) ?? Data()
         self.statusRaw = status.rawValue
         self.accentSeed = accentSeed
         self.createdAt = .now
@@ -105,6 +163,10 @@ public final class Trip {
         get { (try? JSONDecoder().decode(TripPrefs.self, from: prefsData)) ?? .init() }
         set { prefsData = (try? JSONEncoder().encode(newValue)) ?? Data() }
     }
+    public var lodgingOptions: [LodgingOption] {
+        get { (try? JSONDecoder().decode([LodgingOption].self, from: lodgingData)) ?? [] }
+        set { lodgingData = (try? JSONEncoder().encode(newValue)) ?? Data() }
+    }
     public var dayCount: Int { nights + 1 }
     public var sortedDays: [DayPlan] { days.sorted { $0.dayIndex < $1.dayIndex } }
 }
@@ -115,6 +177,7 @@ public final class DayPlan {
     public var dayIndex: Int             // 0-based
     public var date: Date
     public var cityLabel: String         // "京都"
+    public var foodData: Data = Data()   // encoded [FoodOption]（当天附近美食推荐）
     @Relationship(deleteRule: .cascade) public var items: [PlanItem]
 
     public init(id: UUID = UUID(), dayIndex: Int, date: Date = .now,
@@ -123,6 +186,10 @@ public final class DayPlan {
         self.cityLabel = cityLabel; self.items = items
     }
     public var sortedItems: [PlanItem] { items.sorted { $0.order < $1.order } }
+    public var foodOptions: [FoodOption] {
+        get { (try? JSONDecoder().decode([FoodOption].self, from: foodData)) ?? [] }
+        set { foodData = (try? JSONEncoder().encode(newValue)) ?? Data() }
+    }
 }
 
 @Model

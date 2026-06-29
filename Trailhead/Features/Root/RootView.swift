@@ -16,6 +16,7 @@ struct RootView: View {
     @State private var selection: Trip?
     @State private var dayIndex = 0
     @State private var selectedItemID: UUID?
+    @State private var mapFocus: MapFocus?
     @State private var showNewTrip = false
 
     // 生成流程状态
@@ -25,6 +26,7 @@ struct RootView: View {
     @State private var genError: String?
     @State private var genTask: Task<Void, Never>?
     @State private var quotaBanner = false
+    @State private var tripPendingDelete: Trip?
 
     init(container: ModelContainer) {
         // key 解析：环境变量 → ~/.config/trailhead/secrets.json → Keychain（不弹授权框）
@@ -41,6 +43,10 @@ struct RootView: View {
             .alert("生成失败", isPresented: errorBinding, presenting: genError) { _ in
                 Button("好") { genError = nil; generating = false }
             } message: { Text($0) }
+            .confirmationDialog("删除这个行程？", isPresented: deletePresented, presenting: tripPendingDelete) { trip in
+                Button("删除「\(trip.city)」", role: .destructive) { performDelete(trip) }
+                Button("取消", role: .cancel) { tripPendingDelete = nil }
+            } message: { _ in Text("删除后无法恢复。") }
             .onAppear { quotaBanner = QuotaState().isExhausted() }
     }
 
@@ -75,14 +81,17 @@ struct RootView: View {
     #if os(macOS)
     private var macOS: some View {
         NavigationSplitView {
-            TripSidebar(trips: trips, selection: bindingSelection) { showNewTrip = true }
+            TripSidebar(trips: trips, selection: bindingSelection,
+                        onNewTrip: { showNewTrip = true },
+                        onDelete: { tripPendingDelete = $0 })
                 .navigationSplitViewColumnWidth(min: 240, ideal: Metric.sidebarWidth, max: 300)
         } content: {
             Group {
                 if let trip = current {
                     RouteTimelineView(trip: trip,
                                       selectedDayIndex: $dayIndex,
-                                      selectedItemID: $selectedItemID)
+                                      selectedItemID: $selectedItemID,
+                                      mapFocus: $mapFocus)
                         .navigationTitle(trip.city)
                         .navigationSubtitle(trip.subtitle)
                 } else { emptyState }
@@ -93,12 +102,13 @@ struct RootView: View {
             }
         } detail: {
             if let trip = current {
-                MapInspector(trip: trip, dayIndex: dayIndex, selectedItemID: $selectedItemID)
+                MapInspector(trip: trip, dayIndex: dayIndex,
+                             selectedItemID: $selectedItemID, mapFocus: $mapFocus)
                     .navigationSplitViewColumnWidth(min: 320, ideal: 380)
             } else { Color(Palette.canvasBG) }
         }
         .sheet(isPresented: $showNewTrip) {
-            NewTripView { prefs, dest, days in startGeneration(prefs, dest, days) }
+            NewTripView { prefs, dest, days, start in startGeneration(prefs, dest, days, start) }
         }
     }
     #endif
@@ -114,6 +124,7 @@ struct RootView: View {
                         RouteTimelineView(trip: trip,
                                           selectedDayIndex: $dayIndex,
                                           selectedItemID: $selectedItemID,
+                                          mapFocus: $mapFocus,
                                           gutter: Metric.gutterCompact)
                             .navigationTitle("\(trip.city) · D\(dayIndex + 1)")
                             .navigationBarTitleDisplayMode(.inline)
@@ -123,7 +134,7 @@ struct RootView: View {
             .tabItem { Label("行程", systemImage: "list.bullet.indent") }
 
             NavigationStack {
-                NewTripView { prefs, dest, days in startGeneration(prefs, dest, days) }
+                NewTripView { prefs, dest, days, start in startGeneration(prefs, dest, days, start) }
             }
             .tabItem { Label("新建", systemImage: "plus.circle") }
 
@@ -148,7 +159,7 @@ struct RootView: View {
         .frame(minWidth: 460, minHeight: 640)
     }
 
-    private func startGeneration(_ prefs: TripPrefs, _ destination: String, _ days: Int) {
+    private func startGeneration(_ prefs: TripPrefs, _ destination: String, _ days: Int, _ startDate: Date) {
         showNewTrip = false
         genCity = destination
         genDays = days
@@ -156,7 +167,8 @@ struct RootView: View {
         generating = true
         genTask = Task {
             do {
-                let trip = try await engine.generate(destination: destination, prefs: prefs, days: days)
+                let trip = try await engine.generate(destination: destination, prefs: prefs,
+                                                      days: days, startDate: startDate)
                 guard !Task.isCancelled else { return }
                 QuotaState().clear()
                 quotaBanner = false
@@ -214,6 +226,18 @@ struct RootView: View {
 
     private var errorBinding: Binding<Bool> {
         Binding(get: { genError != nil }, set: { if !$0 { genError = nil } })
+    }
+
+    private var deletePresented: Binding<Bool> {
+        Binding(get: { tripPendingDelete != nil }, set: { if !$0 { tripPendingDelete = nil } })
+    }
+
+    /// 删除行程；若删的是当前选中项，清空选中让列表回落到下一条。
+    private func performDelete(_ trip: Trip) {
+        let wasSelected = current?.id == trip.id
+        try? TripRepository(context: context).delete(trip)
+        if wasSelected { selection = nil; dayIndex = 0; selectedItemID = nil }
+        tripPendingDelete = nil
     }
 
     private var emptyState: some View {
