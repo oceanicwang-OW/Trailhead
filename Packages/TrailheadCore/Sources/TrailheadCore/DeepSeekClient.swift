@@ -76,6 +76,13 @@ public struct DeepSeekClient: LLMProvider {
         return Data(content.utf8)
     }
 
+    /// LLMProvider（P7）：对已定稿行程补文案（note + 每日主题）。串联 PromptBuilder.noteMessages。
+    public func annotateNotes(prefs: TripPrefs, stops: [[PlannedStop]]) async throws -> Data {
+        let messages = PromptBuilder.noteMessages(prefs: prefs, stops: stops)
+        let content = try await complete(messages: messages, jsonMode: true)
+        return Data(content.utf8)
+    }
+
     // MARK: - 单次请求
 
     private func send(messages: [ChatMessage], jsonMode: Bool, key: String) async throws -> String {

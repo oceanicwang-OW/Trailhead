@@ -59,9 +59,13 @@ public final class ItineraryEngine: ObservableObject {
         set(.dining, 0.6)
         guard perDay.contains(where: { !$0.isEmpty }) else { throw EngineError.emptyPlan }
 
+        // 几何定稿后，LLM 只补文案（note + 每日主题）；失败自动降级留空，不阻断生成（P7.1）。
+        let annotated = await NoteWriter.annotate(stops: perDay, prefs: prefs, llm: llm)
+
         set(.transit, 0.8)
         let foodPool = candidates.filter { $0.kind == .food }
-        let dayPlans = await buildDays(perDay, destination: destination, adcode: adcode,
+        let dayPlans = await buildDays(annotated.stops, themes: annotated.themes,
+                                       destination: destination, adcode: adcode,
                                        startDate: startDate, foodPool: foodPool)
 
         set(.budgeting, 0.95)
@@ -92,8 +96,8 @@ public final class ItineraryEngine: ObservableObject {
 
     // MARK: - 步骤
 
-    /// 组装每天的 PlanItem，并在相邻 POI 间补交通段（PDR T3.5）。
-    private func buildDays(_ perDay: [[PlannedStop]], destination: String,
+    /// 组装每天的 PlanItem，并在相邻 POI 间补交通段（PDR T3.5）。themes 与 perDay 天序对齐（P7）。
+    private func buildDays(_ perDay: [[PlannedStop]], themes: [String?], destination: String,
                            adcode: String, startDate: Date, foodPool: [POICandidate]) async -> [DayPlan] {
         let cal = Calendar.current
         var result: [DayPlan] = []
@@ -101,6 +105,7 @@ public final class ItineraryEngine: ObservableObject {
             let date = cal.date(byAdding: .day, value: index, to: startDate) ?? startDate
             let items = await ItineraryDayBuilder.buildItems(from: stops, source: source, city: adcode)
             let day = DayPlan(dayIndex: index, date: date, cityLabel: destination, items: items)
+            day.theme = (themes.indices.contains(index) ? themes[index] : nil) ?? ""
             day.foodOptions = Self.nearbyFood(forItems: items, foodPool: foodPool)
             result.append(day)
         }
