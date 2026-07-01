@@ -39,6 +39,47 @@ public enum PromptBuilder {
         """
     }
 
+    // MARK: - P7 NoteWriter（只补文案，不动几何）
+
+    /// NoteWriter 输出 schema：每天一个主题 + 若干贴士，poi_id 必须来自给定行程，不得新增/删除/改序。
+    static let noteSchema = #"""
+    { "days": [ { "day": 1, "theme": "一句话主题", "notes": [
+      { "poi_id": "<行程中已有的 id>", "note": "一句话贴士" }
+    ] } ] }
+    """#
+
+    public static func noteMessages(prefs: TripPrefs, stops: [[PlannedStop]]) -> [ChatMessage] {
+        [ChatMessage(.system, noteSystemPrompt()),
+         ChatMessage(.user, noteUserPrompt(prefs: prefs, stops: stops))]
+    }
+
+    static func noteSystemPrompt() -> String {
+        """
+        行程的顺序、时间、停留都已由系统排定且不可更改。你的唯一任务是「配文案」：
+        ① 为每一天起一个简短主题（theme，≤12 字，概括当天调性，如「老城人文漫步」）；
+        ② 为每个地点写一句话贴士（note，≤30 字，结合类型/特色/时段，实用不套话）；
+        ③ 只能引用给定行程里已存在的 poi_id，禁止新增、删除或改动地点与顺序；
+        ④ 拿不准的点可省略其 note（宁缺毋滥）；
+        ⑤ 严格输出 JSON，结构如下，不要任何额外文字：
+        \(noteSchema)
+        """
+    }
+
+    static func noteUserPrompt(prefs: TripPrefs, stops: [[PlannedStop]]) -> String {
+        var lines = ["旅行者偏好——节奏：\(prefs.pace.display)；兴趣：\(prefs.tags.joined(separator: "、"))"]
+        if !prefs.freeText.isEmpty { lines.append("补充：\(prefs.freeText)") }
+        lines.append("\n已排定行程（只为这些 poi_id 配文案）：")
+        for (index, day) in stops.enumerated() {
+            lines.append("第 \(index + 1) 天：")
+            for stop in day {
+                let time = stop.time.map { "\($0) " } ?? ""
+                lines.append("- \(time)poi_id=\(stop.candidate.id) | \(stop.candidate.name) | "
+                    + "\(stop.candidate.kind.label)/\(stop.candidate.subtype)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     static func userPrompt(prefs: TripPrefs, candidates: [POICandidate], days: Int) -> String {
         var lines = ["天数：\(days)",
                      "节奏：\(prefs.pace.display)",

@@ -152,7 +152,11 @@ public struct TripRepository {
         guard let stops = perDay.first, !stops.isEmpty else {
             throw ItineraryEngine.EngineError.emptyPlan
         }
-        let newItems = await ItineraryDayBuilder.buildItems(from: stops, source: source, city: adcode)
+        // 几何定稿后补文案（note + 当天主题）；失败自动降级留空（P7.1）。
+        let annotated = await NoteWriter.annotate(stops: [stops], prefs: trip.prefs, llm: llm)
+        let annotatedStops = annotated.stops.first ?? stops
+        day.theme = annotated.themes.first.flatMap { $0 } ?? day.theme
+        let newItems = await ItineraryDayBuilder.buildItems(from: annotatedStops, source: source, city: adcode)
 
         for old in day.items {
             context.delete(old)

@@ -76,7 +76,9 @@ struct RouteTimelineView: View {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = "EEEE · M/d"
-        return "\(f.string(from: day.date)) · \(day.cityLabel)"
+        var parts = ["\(f.string(from: day.date)) · \(day.cityLabel)"]
+        if !day.theme.isEmpty { parts.append(day.theme) }   // P7 当天主题（未生成则不显示）
+        return parts.joined(separator: " · ")
     }
 
     private var dayTabs: some View {

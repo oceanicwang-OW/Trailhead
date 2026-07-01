@@ -117,6 +117,18 @@ public struct StubPOISource: POIDataSource {
 public protocol LLMProvider {
     /// Returns a JSON itinerary that references only the given candidate poi ids.
     func planItinerary(prefs: TripPrefs, candidates: [POICandidate], days: Int) async throws -> Data
+
+    /// P7 NoteWriter：对已定稿（几何已排好）的行程只补文案——每点 note + 每日主题，
+    /// 返回 JSON（见 PromptBuilder.noteMessages）。不得改动顺序/时间，仅锦上添花。
+    func annotateNotes(prefs: TripPrefs, stops: [[PlannedStop]]) async throws -> Data
+}
+
+public extension LLMProvider {
+    /// 默认不产文案（返回空 days），保持向后兼容——只有真实 provider（DeepSeek）覆写。
+    /// NoteWriter 对空结果降级为「note 留空、主题 nil」，故 Stub/测试 mock 无需实现本方法。
+    func annotateNotes(prefs: TripPrefs, stops: [[PlannedStop]]) async throws -> Data {
+        Data(#"{"days":[]}"#.utf8)
+    }
 }
 
 public struct StubLLMProvider: LLMProvider {

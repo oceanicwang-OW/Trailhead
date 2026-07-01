@@ -178,6 +178,7 @@ public final class DayPlan {
     public var dayIndex: Int             // 0-based
     public var date: Date
     public var cityLabel: String         // "京都"
+    public var theme: String = ""        // 当天主题（P7 NoteWriter 生成，空=未生成；SwiftData 轻量迁移安全）
     public var foodData: Data = Data()   // encoded [FoodOption]（当天附近美食推荐）
     @Relationship(deleteRule: .cascade) public var items: [PlanItem]
 
