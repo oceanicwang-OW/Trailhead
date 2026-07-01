@@ -180,8 +180,7 @@ struct NewTripView: View {
             FlowLayout(spacing: 9) {
                 ForEach(allCuisines, id: \.self) { c in
                     chip(c, on: selectedCuisines.contains(c)) {
-                        if selectedCuisines.contains(c) { selectedCuisines.remove(c) }
-                        else { selectedCuisines.insert(c) }
+                        if selectedCuisines.contains(c) { selectedCuisines.remove(c) } else { selectedCuisines.insert(c) }
                     }
                 }
             }
