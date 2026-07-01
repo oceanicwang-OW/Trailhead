@@ -28,10 +28,18 @@ final class CandidateCurationTests: XCTestCase {
         XCTAssertEqual(out.map(\.id), ["S"])      // 住宿不进行程候选
     }
 
-    func testUnratedSinksBelowRatedSameKind() {
-        let cands = [poi("none", .sight, nil), poi("rated", .sight, 4.0)]
+    func testUnratedSinksBelowHigherRatedSameKind() {
+        let cands = [poi("none", .sight, nil), poi("rated", .sight, 4.9)]
         let out = CandidateCuration.curate(cands, limits: .init(sights: 5, food: 0, other: 0))
         XCTAssertEqual(out.map(\.id), ["rated", "none"])
+    }
+
+    /// P0 止血：无评分（常是招牌景点）不再被当作 0 分沉底，而是按中性分 4.0 参与排序，
+    /// 因此应排在评分明显更低的同类点之前——对齐 PromptBuilder.unratedScore。
+    func testUnratedOutranksLowerRatedSameKind() {
+        let cands = [poi("low", .sight, 3.1), poi("none", .sight, nil)]
+        let out = CandidateCuration.curate(cands, limits: .init(sights: 5, food: 0, other: 0))
+        XCTAssertEqual(out.map(\.id), ["none", "low"])
     }
 
     func testPreferenceBoostLiftsMatchingSubtypeAboveHigherRated() {

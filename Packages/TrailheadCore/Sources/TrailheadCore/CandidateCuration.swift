@@ -20,6 +20,10 @@ public enum CandidateCuration {
     /// 偏好加权分（命中用户兴趣标签对应的子类型 → 排序时加分，让合偏好的点上浮）。
     static let preferenceBoost = 1.0
 
+    /// 无评分时的中性分（P0 止血）：高德常年缺评分的招牌景点不应被当作 0 分挤出 top-K。
+    /// 取值对齐 `PromptBuilder.unratedScore`，同一「无评分中性分」语义应保持一致。
+    static let neutralRating = 4.0
+
     /// 兴趣标签 → 命中判定用的子类型/名称关键词。让「历史古迹」「自然风光」等真正有区别。
     static let subtypeHints: [String: [String]] = [
         "历史古迹": ["寺", "庙", "宫", "古", "纪念", "故居", "历史", "遗址", "祠", "塔", "街区", "炮台", "陵"],
@@ -49,9 +53,9 @@ public enum CandidateCuration {
         return pins + sights + food + other
     }
 
-    /// 综合排序分：有评分用评分（无评分视为 0），命中偏好再加权。
+    /// 综合排序分：有评分用评分（无评分按中性分处理，不再沉底），命中偏好再加权。
     static func score(_ c: POICandidate, tags: [String]) -> Double {
-        (c.rating ?? 0) + (matchesPreference(c, tags: tags) ? preferenceBoost : 0)
+        (c.rating ?? neutralRating) + (matchesPreference(c, tags: tags) ? preferenceBoost : 0)
     }
 
     /// 候选的子类型或名称是否命中任一所选兴趣标签的关键词。

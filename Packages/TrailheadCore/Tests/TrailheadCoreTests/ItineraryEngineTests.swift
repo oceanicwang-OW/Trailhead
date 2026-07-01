@@ -97,15 +97,16 @@ final class ItineraryEngineTests: XCTestCase {
     }
 
     @MainActor
-    func testRetriesOnceOnBadJSON() async throws {
+    func testGeometryPipelineIgnoresLLM() async throws {
+        // 确定性几何编排已移除 LLM：即便 LLM 只吐垃圾，也照常产出可行行程，且从不调用 LLM。
         let ctx = try TestSupport.makeContext()
         let source = MockSource()
         source.byTag = ["景点": [cand("A")]]
-        let llm = MockLLM(["这不是 JSON", #"{"days":[{"day":1,"items":[{"poi_id":"A"}]}]}"#])
+        let llm = MockLLM(["这不是 JSON"])
         let engine = ItineraryEngine(source: source, llm: llm, context: ctx)
 
         let trip = try await engine.generate(destination: "北京", prefs: TripPrefs(tags: ["景点"]), days: 1)
-        XCTAssertEqual(llm.calls, 2)                 // 坏 JSON → 重试一次
+        XCTAssertEqual(llm.calls, 0)                 // 几何步骤不再调用 LLM
         XCTAssertEqual(trip.sortedDays[0].sortedItems.compactMap(\.poiId), ["A"])
     }
 

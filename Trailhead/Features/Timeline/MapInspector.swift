@@ -88,8 +88,7 @@ struct MapInspector: View {
     private func recenter(animated: Bool = true) {
         let coords = pois.compactMap(coord)
         guard let region = Self.region(for: coords) else { return }
-        if animated { withAnimation(.easeInOut(duration: 0.45)) { camera = .region(region) } }
-        else { camera = .region(region) }
+        if animated { withAnimation(.easeInOut(duration: 0.45)) { camera = .region(region) } } else { camera = .region(region) }
     }
 
     /// 外接所有坐标并留出边距的区域。

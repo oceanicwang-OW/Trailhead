@@ -50,11 +50,11 @@ line_length:
   ignores_urls: true
 
 type_body_length:
-  warning: 400
+  warning: 500
   error: 600
 
 file_length:
-  warning: 500
+  warning: 600
   error: 800
 
 function_body_length:

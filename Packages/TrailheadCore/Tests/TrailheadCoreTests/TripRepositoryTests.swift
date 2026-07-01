@@ -313,9 +313,10 @@ final class TripRepositoryTests: XCTestCase {
         XCTAssertEqual(regenerated.map(\.kind), [.sight, .transit, .food])
         XCTAssertEqual(regenerated.compactMap(\.poiId), ["X", "Y"])
         XCTAssertEqual(regenerated.map(\.order), [0, 1, 2])
-        XCTAssertEqual(regenerated[0].plannedTime, "10:00")
+        // 时间/停留改由确定性模拟器产出：首点从 dayStart 09:00 起、景点默认停留 90 分；note 留空（P7 未做）。
+        XCTAssertEqual(regenerated[0].plannedTime, "09:00")
         XCTAssertEqual(regenerated[0].stayLabel, "约 1.5 小时")
-        XCTAssertEqual(regenerated[0].note, "new")
+        XCTAssertNil(regenerated[0].note)
         XCTAssertTrue(regenerated.allSatisfy { !oldDay0IDs.contains($0.id) })
         XCTAssertEqual(source.routePairs, ["X-Y"])
     }
@@ -350,10 +351,9 @@ final class TripRepositoryTests: XCTestCase {
         let ctx = try TestSupport.makeContext()
         let repo = TripRepository(context: ctx)
         let source = RegenerateSpySource()
-        source.byTag = ["景点": [regenCandidate("X", kind: .sight)]]
-        let llm = RegenerateLLM([
-            #"{"days":[{"day":1,"items":[]}]}"#,
-        ])
+        // 只有餐饮、无景点 → 无地理锚点，几何流水线产出空天 → emptyPlan（不删旧、不调 LLM）。
+        source.byTag = ["景点": [regenCandidate("X", kind: .food)]]
+        let llm = RegenerateLLM([#"{"days":[]}"#])
         let oldA = PlanItem.poi(0, kind: .sight, time: "09:00", name: "Old A", subtype: "景点", note: "", stay: "")
         oldA.poiId = "OLD-A"; oldA.lat = 30.0; oldA.lng = 104.0
         let oldB = PlanItem.poi(1, kind: .food, time: "12:00", name: "Old B", subtype: "餐饮", note: "", stay: "")
@@ -369,7 +369,7 @@ final class TripRepositoryTests: XCTestCase {
         } catch ItineraryEngine.EngineError.emptyPlan {
             XCTAssertEqual(day.sortedItems.map(\.id), oldIDs)
             XCTAssertEqual(day.sortedItems.compactMap(\.poiId), ["OLD-A", "OLD-B"])
-            XCTAssertEqual(llm.calls, 1)
+            XCTAssertEqual(llm.calls, 0)                 // 几何流水线不调用 LLM
         }
     }
 }
