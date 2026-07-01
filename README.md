@@ -116,6 +116,29 @@ Trailhead/
 - 新建：真实出发日期 `DatePicker`（原为写死文案）；地图随行程/天数自动定位（原固定京都）。
 - 美食/住宿卡片**点击在地图定位**（`MapFocus`）；侧栏行程**右键删除**（带二次确认）。
 
+## 编排层改造（确定性几何）
+
+把「怎么排」从大模型盲排收回为**确定性算法**（详见 [`PDR-Trailhead编排层改造.md`](PDR-Trailhead编排层改造.md)）。
+`planStops` 内部替换为 6 步纯几何流水线（签名不变、`days==1` 单日重生成复用）：
+
+```
+拆分(sights含other/food) → DayClusterer 聚类分天(k-means+容量约束) → DayRouter 簇内排序(贪心NN+2-opt)
+ → MealSlotter 餐饮卡点(就近高分) → ScheduleSimulator 前向模拟赋 time/stayMin(营业窗过滤) → 装配 PlannedStop
+```
+
+- `time`/`stayMin` 由**模拟器确定性产出**（营业窗内、时间单调），不再由 LLM 拍脑袋；`CandidateCuration`
+  无评分点按中性分 4.0 排序，招牌景点不再沉底。
+- 出口 `ItineraryFeasibility` 自检器强制过：违规丢弃、返回最优可行子集，不抛错。
+- 各模块均为纯函数、不触碰 `ModelContext`（`PlanItem` 仍只在 `buildItems(@MainActor)` 内建）。
+
+**已知限制（待后续增量）**
+
+- **跨水域段可能误判为步行（P6.3 本期未做）**：`mode()` 按直线距离 ≤1500m 判步行，本岛↔离岛（如
+  厦门↔鼓浪屿）直线常 <1500m 却需轮渡，会被标为「步行」。展示仍走真实 `route`；水域兜底需海岸线数据或
+  真实路网矩阵，留到有真实反馈后再上（PDR 未决③）。当前 Core 回归用例刻意取本岛点、不涉跨海。
+- **LLM 文案（P7 NoteWriter）本期未做**：`PlannedStop.note` 暂留空，先验证「排得对」，便于新老编排 A/B 对比。
+- 行段估时用 haversine × 模式速度作代理排序/卡点（非展示），`planStops` 签名无 city，故估时按步行/驾车档。
+
 ## 进度
 
 > 单测：**99 个 Core + 3 个 App 全过**（`make test`）；CI 双端 build + lint 绿。
