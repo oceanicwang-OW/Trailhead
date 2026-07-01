@@ -18,6 +18,7 @@ final class TravelEstimatorTests: XCTestCase {
         XCTAssertEqual(TravelEstimator.speedKmh(for: .bus), 18)
         XCTAssertEqual(TravelEstimator.speedKmh(for: .drive), 30)
         XCTAssertEqual(TravelEstimator.speedKmh(for: .taxi), 30)
+        XCTAssertEqual(TravelEstimator.speedKmh(for: .ferry), 12)
     }
 
     func testShortSegmentUsesWalkSpeed() {

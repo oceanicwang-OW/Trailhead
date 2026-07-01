@@ -214,6 +214,7 @@ private extension TripRepository {
     }
 
     static func mode(from: POICandidate, to: POICandidate, city: String) -> TransitMode {
+        if WaterGate.crossesWater(from, to) { return .ferry }  // 水域兜底（P6.3），与 ItineraryDayBuilder.mode() 同源
         guard haversineMeters(from, to) > 1500 else { return .walk }
         return city.isEmpty ? .drive : .metro
     }
