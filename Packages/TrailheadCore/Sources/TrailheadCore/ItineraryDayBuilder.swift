@@ -41,7 +41,9 @@ public enum ItineraryDayBuilder {
             })
             previousExit = scheduled.last.map { (lat: $0.candidate.lat, lng: $0.candidate.lng) }
         }
-        return result
+
+        // 出口自检（§7）：硬约束校验并返回最优可行子集，不抛错。
+        return ItineraryFeasibility.check(result, days: days, maxSightsPerDay: maxPerDay).plan
     }
 
     /// 当日分钟数 → "HH:mm"。仅在装配 PlannedStop 时用，内部一律 Int 运算（B5）。
