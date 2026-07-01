@@ -23,7 +23,7 @@ public enum ItemKind: String, Codable, CaseIterable, Sendable {
 }
 
 public enum TransitMode: String, Codable, Sendable {
-    case walk, metro, bus, taxi, drive, train
+    case walk, metro, bus, taxi, drive, train, ferry
 
     public var display: String {
         switch self {
@@ -33,6 +33,7 @@ public enum TransitMode: String, Codable, Sendable {
         case .taxi:  return "出租车"
         case .drive: return "驾车"
         case .train: return "列车"
+        case .ferry: return "轮渡"
         }
     }
 }

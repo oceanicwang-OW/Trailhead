@@ -92,8 +92,10 @@ public enum ItineraryDayBuilder {
         minutes >= 60 ? "约 \(String(format: "%g", (Double(minutes) / 60 * 10).rounded() / 10)) 小时" : "\(minutes) 分钟"
     }
 
-    /// 短途步行；远途有 city 走公交、无 city 退化驾车（与 AmapClient.route 一致，标签不串）。
+    /// 跨水域强制轮渡（P6.3 水域兜底，先于阈值判定，短距离跨海不再误判步行）；
+    /// 否则短途步行；远途有 city 走公交、无 city 退化驾车（与 AmapClient.route 一致，标签不串）。
     static func mode(from: POICandidate, to: POICandidate, city: String) -> TransitMode {
+        if WaterGate.crossesWater(from, to) { return .ferry }
         guard haversineMeters(from, to) > 1500 else { return .walk }
         return city.isEmpty ? .drive : .metro
     }
