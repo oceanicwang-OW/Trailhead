@@ -185,11 +185,12 @@ private extension TripRepository {
                 continue
             }
             if let previousCandidate {
-                let mode = Self.mode(from: previousCandidate, to: candidate, city: city)
-                if let segment = try? await source.route(from: previousCandidate, to: candidate, mode: mode, city: city) {
+                // 段模式与跨水回填统一走 routedSegment（P6.3），与 buildItems 同一逻辑。
+                if let segment = await ItineraryDayBuilder.routedSegment(from: previousCandidate, to: candidate,
+                                                                         source: source, city: city) {
                     let transit = PlanItem(order: 0, kind: .transit)
-                    transit.transitMode = mode
-                    transit.transitDesc = mode.display
+                    transit.transitMode = segment.mode
+                    transit.transitDesc = segment.mode.display
                     transit.transitMinutes = segment.minutes
                     transit.transitMeters = segment.meters
                     transit.transitCost = segment.cost
@@ -219,20 +220,6 @@ private extension TripRepository {
         try context.save()
     }
 
-    static func mode(from: POICandidate, to: POICandidate, city: String) -> TransitMode {
-        guard haversineMeters(from, to) > 1500 else { return .walk }
-        return city.isEmpty ? .drive : .metro
-    }
-
-    static func haversineMeters(_ a: POICandidate, _ b: POICandidate) -> Double {
-        let radius = 6_371_000.0
-        let dLat = (b.lat - a.lat) * .pi / 180
-        let dLng = (b.lng - a.lng) * .pi / 180
-        let lat1 = a.lat * .pi / 180
-        let lat2 = b.lat * .pi / 180
-        let h = sin(dLat / 2) * sin(dLat / 2) + cos(lat1) * cos(lat2) * sin(dLng / 2) * sin(dLng / 2)
-        return 2 * radius * asin(min(1, sqrt(h)))
-    }
 }
 
 private extension PlanItem {

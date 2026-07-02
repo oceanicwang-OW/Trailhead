@@ -113,11 +113,11 @@ public enum ItineraryDayBuilder {
         var previous: POICandidate?
         for stop in stops {
             if let previous {
-                let mode = mode(from: previous, to: stop.candidate, city: city)
-                if let segment = try? await source.route(from: previous, to: stop.candidate, mode: mode, city: city) {
+                if let segment = await routedSegment(from: previous, to: stop.candidate,
+                                                     source: source, city: city) {
                     let transit = PlanItem(order: order, kind: .transit)
-                    transit.transitMode = mode
-                    transit.transitDesc = mode.display
+                    transit.transitMode = segment.mode
+                    transit.transitDesc = segment.mode.display
                     transit.transitMinutes = segment.minutes
                     transit.transitMeters = segment.meters
                     transit.transitCost = segment.cost
@@ -147,9 +147,39 @@ public enum ItineraryDayBuilder {
     }
 
     /// 短途步行；远途有 city 走公交、无 city 退化驾车（与 AmapClient.route 一致，标签不串）。
+    /// 注意（A1/P6.3）：直线阈值对短距离跨水不可靠（陆地↔鼓浪屿直线 <1500m 会被误判步行），
+    /// 不抬阈值，由 routedSegment 用真实路线回填兜底。
     static func mode(from: POICandidate, to: POICandidate, city: String) -> TransitMode {
         guard haversineMeters(from, to) > 1500 else { return .walk }
         return city.isEmpty ? .drive : .metro
+    }
+
+    /// 步行路网距离 / 直线距离超过该倍数 → 疑似水域/障碍分隔（如轮渡场景），回填非步行（P6.3）。
+    static let walkDetourCap = 3.0
+
+    /// 请求一段真实交通（供 buildItems / rebuildDay 共用）：mode() 初判；步行段若
+    /// 路网严重绕行或请求失败，改用非步行模式重请求（真实 route 回填，短距跨水不再误判步行）。
+    public static func routedSegment(from: POICandidate, to: POICandidate,
+                                     source: POIDataSource, city: String)
+        async -> (mode: TransitMode, minutes: Int, meters: Int, cost: Int?)? {
+        let initial = mode(from: from, to: to, city: city)
+        let fallback: TransitMode = city.isEmpty ? .drive : .metro
+
+        if let seg = try? await source.route(from: from, to: to, mode: initial, city: city) {
+            // 步行路网远超直线（低于 200m 的近点不触发，避免噪声）→ 跨水特征，回填非步行。
+            if initial == .walk,
+               Double(seg.meters) > walkDetourCap * max(haversineMeters(from, to), 200),
+               let alt = try? await source.route(from: from, to: to, mode: fallback, city: city) {
+                return (fallback, alt.minutes, alt.meters, alt.cost)
+            }
+            return (initial, seg.minutes, seg.meters, seg.cost)
+        }
+        // 步行请求失败（水域不可达等）→ 尝试非步行回填；其余模式失败按原语义跳过该段。
+        if initial == .walk,
+           let alt = try? await source.route(from: from, to: to, mode: fallback, city: city) {
+            return (fallback, alt.minutes, alt.meters, alt.cost)
+        }
+        return nil
     }
 
     static func haversineMeters(_ a: POICandidate, _ b: POICandidate) -> Double {
