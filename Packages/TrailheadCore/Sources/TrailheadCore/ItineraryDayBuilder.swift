@@ -29,10 +29,13 @@ public enum ItineraryDayBuilder {
         for cluster in dayClusters {
             // 3. 簇内排序（贪心NN + 2-opt；天间用上一天出口锚点衔接）。
             let routed = DayRouter.route(cluster, entryAnchor: previousExit)
-            // 4. 餐饮卡点（就近高分插午/晚餐；跨天去重）。
-            let withMeals = MealSlotter.insertMeals(sights: routed, foodPool: food, usedIds: usedFood)
+            // 4. 第一遍模拟（仅景点）→ 临时时刻线（D1）。
+            let firstPass = ScheduleSimulator.simulate(stops: routed, pace: pace, city: "")
+            // 5. 按临时时刻线插午/晚餐（餐窗中点定位 + 顺路绕行选店，跨天去重，D1）。
+            let withMeals = MealSlotter.insertMeals(schedule: firstPass.scheduled, foodPool: food,
+                                                    usedIds: usedFood)
             for stop in withMeals where stop.kind == .food { usedFood.insert(stop.id) }
-            // 5. 前向模拟赋 time/stayMin + 营业窗过滤（city 未入签名，估时按驾车/步行）。
+            // 6. 第二遍模拟（景点+餐饮）→ 终版 time/stayMin。
             let scheduled = ScheduleSimulator.simulate(stops: withMeals, pace: pace, city: "").scheduled
             // 6. 装配 PlannedStop（Int 分钟 → "HH:mm"）；note 留空（P7 未做本期）。
             result.append(scheduled.map {
