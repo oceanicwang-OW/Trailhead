@@ -53,8 +53,9 @@ public final class ItineraryEngine: ObservableObject {
                                                            tags: prefs.tags, pinned: pinned)
         guard !itineraryCandidates.isEmpty else { throw EngineError.noCandidates }
 
+        // startDate 使 D2 周闭馆逐日生效（天序号 → weekday 由 planStops 推导）。
         let perDay = try await ItineraryDayBuilder.planStops(prefs: prefs, candidates: itineraryCandidates,
-                                                             days: days, llm: llm)
+                                                             days: days, llm: llm, startDate: startDate)
 
         set(.dining, 0.6)
         guard perDay.contains(where: { !$0.isEmpty }) else { throw EngineError.emptyPlan }

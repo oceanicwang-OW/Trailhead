@@ -70,6 +70,17 @@ final class OrchestrationPipelineTests: XCTestCase {
         XCTAssertTrue(daySightSets.contains(["s4", "s5", "s6"]))
     }
 
+    func testWeekdayMappingMondayFirst() {
+        // 2026-07-06 为周一：Apple weekday（1=周日）→ PDR 约定（1=周一…7=周日）。
+        var comps = DateComponents()
+        comps.year = 2026; comps.month = 7; comps.day = 6
+        let monday = Calendar.current.date(from: comps)!
+        XCTAssertEqual(ItineraryDayBuilder.weekday(of: monday, dayOffset: 0), 1)
+        XCTAssertEqual(ItineraryDayBuilder.weekday(of: monday, dayOffset: 5), 6)
+        XCTAssertEqual(ItineraryDayBuilder.weekday(of: monday, dayOffset: 6), 7)
+        XCTAssertNil(ItineraryDayBuilder.weekday(of: nil, dayOffset: 0))       // 无日期 → nil
+    }
+
     func testSingleDayRegenerationPacksAllIntoOneDay() async throws {
         // days==1（单日重生成）跳过分天：同团候选全进当天、时间单调。
         let oneCluster = [
