@@ -116,32 +116,45 @@ Trailhead/
 - 新建：真实出发日期 `DatePicker`（原为写死文案）；地图随行程/天数自动定位（原固定京都）。
 - 美食/住宿卡片**点击在地图定位**（`MapFocus`）；侧栏行程**右键删除**（带二次确认）。
 
-## 编排层改造（确定性几何）
+## 编排层改造（确定性几何，v2）
 
-把「怎么排」从大模型盲排收回为**确定性算法**（详见 [`PDR-Trailhead编排层改造.md`](PDR-Trailhead编排层改造.md)）。
-`planStops` 内部替换为 6 步纯几何流水线（签名不变、`days==1` 单日重生成复用）：
+把「怎么排」从大模型盲排收回为**确定性算法**（v1 详见 [`PDR-Trailhead编排层改造.md`](PDR-Trailhead编排层改造.md)，
+v2 修订 D1–D9 详见 [`PDR-Trailhead编排层改造-v2.md`](PDR-Trailhead编排层改造-v2.md)）。
+`planStops` 内部为 8 步纯几何流水线（对外契约不变、`days==1` 单日重生成复用；新增可缺省的
+`startDate` 参数推导每日 weekday）：
 
 ```
-拆分(sights含other/food) → DayClusterer 聚类分天(k-means+容量约束) → DayRouter 簇内排序(贪心NN+2-opt)
- → MealSlotter 餐饮卡点(就近高分) → ScheduleSimulator 前向模拟赋 time/stayMin(营业窗过滤) → 装配 PlannedStop
+拆分(sights含other/food) → DayClusterer 聚类分天(k-means 分数播种 D6 + 点数/时间预算容量 D7)
+ → 逐天: DayRouter 簇内排序(贪心NN+2-opt) → ScheduleSimulator 第一遍(仅景点, 临时时刻线)
+   → MealSlotter 插餐(餐窗中点定位+顺路绕行选店 D1) → ScheduleSimulator 第二遍(终版 time/stayMin)
+ → SpillRepair 跨天重插(丢点不静默消失 D3) → 装配 PlannedStop → ItineraryFeasibility 出口自检
 ```
 
-- `time`/`stayMin` 由**模拟器确定性产出**（营业窗内、时间单调），不再由 LLM 拍脑袋；`CandidateCuration`
+- **v2 核心增益**：插餐不再靠猜（D1 两遍模拟）；「周一闭馆」逐日生效（D2 `OpenSchedule.windows(on:)`）；
+  招牌点不再静默消失（D3 按分牺牲 + spill 池 + 跨天重插）；估时不再系统性乐观（D4 绕行系数
+  步行 1.25/公交 1.40/驾车 1.35）；早到超 45min 不再干等（D5 交换/后移）。
+- **确定性契约（D6）**：同输入必同输出（无随机源，平手一律按 poi_id 破平）；「重新生成的多样性」由
+  显式 `seedOffset` 承担。回归可对两次输出做逐字段 diff。
+- `time`/`stayMin` 由**模拟器确定性产出**（当日营业窗内、时间单调）；`CandidateCuration`
   无评分点按中性分 4.0 排序，招牌景点不再沉底。
-- 出口 `ItineraryFeasibility` 自检器强制过：违规丢弃、返回最优可行子集，不抛错。
+- 出口 `ItineraryFeasibility` 自检器强制过：硬违规丢弃、返回最优可行子集，不抛错；spill 最终
+  丢弃记 warning；2-opt 收敛与 <30° 急回折记 info（D8）。
+- **短距跨水不再误判步行（P6.3/A1）**：不抬 1500m 阈值，`routedSegment` 用真实路线回填——步行路网
+  距离 >3× 直线（或步行请求失败）即改用驾车/公交段（本岛↔鼓浪屿类场景）。
+- **单日重生成排除集（D9）**：`regenerateDay` 预先滤掉其余各天已排 poi_id，并传 `day.date` 使周闭馆生效。
 - 各模块均为纯函数、不触碰 `ModelContext`（`PlanItem` 仍只在 `buildItems(@MainActor)` 内建）。
 
 **已知限制（待后续增量）**
 
-- **跨水域段可能误判为步行（P6.3 本期未做）**：`mode()` 按直线距离 ≤1500m 判步行，本岛↔离岛（如
-  厦门↔鼓浪屿）直线常 <1500m 却需轮渡，会被标为「步行」。展示仍走真实 `route`；水域兜底需海岸线数据或
-  真实路网矩阵，留到有真实反馈后再上（PDR 未决③）。当前 Core 回归用例刻意取本岛点、不涉跨海。
-- **LLM 文案（P7 NoteWriter）本期未做**：`PlannedStop.note` 暂留空，先验证「排得对」，便于新老编排 A/B 对比。
-- 行段估时用 haversine × 模式速度作代理排序/卡点（非展示），`planStops` 签名无 city，故估时按步行/驾车档。
+- **LLM 文案（P7 NoteWriter）本期未做**（PDR v2 未决②）：`PlannedStop.note` 暂留空，先验证「排得对」，
+  便于新老编排 A/B 对比；后续以单次批量调用补文案（D9 调用形态）。
+- 行段估时用 haversine × circuity × 模式速度作代理排序/卡点（非展示，PDR v2 未决③）；`planStops`
+  内部无 city，故估时按步行/驾车档。真实路网距离矩阵留待有真实反馈后评估。
+- `dayStart`/`dayEnd` 本期写死 09:00–20:00（PDR v2 未决①），做成常量，待验证稳定后开放 `TripPrefs`/UI。
 
 ## 进度
 
-> 单测：**99 个 Core + 3 个 App 全过**（`make test`）；CI 双端 build + lint 绿。
+> 单测：**Core（含编排层 v2 回归）+ App 全过**（`make test`）；CI 双端 build + lint 绿。
 > **M1 数据闭环达成**：端到端「输入偏好 → 库里出现完整可信行程」已通过（mock 注入）。
 
 | 阶段 | 任务 | 状态 |
