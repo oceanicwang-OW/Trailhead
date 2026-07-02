@@ -56,7 +56,8 @@ final class ItineraryEngineTests: XCTestCase {
     func testGenerateEndToEndPersistsTrip() async throws {
         let ctx = try TestSupport.makeContext()
         let source = MockSource()
-        source.byTag = ["美食": [cand("A", .sight), cand("B", .food), cand("C", .sight)]]
+        // v2（D1）：插餐基于临时时刻线——3 景点使时刻线跨越午窗中点 12:30，午餐 B 才会插入。
+        source.byTag = ["美食": [cand("A", .sight), cand("B", .food), cand("C", .sight), cand("D", .sight)]]
         let llm = MockLLM([#"{"days":[{"day":1,"items":[{"poi_id":"A","time":"09:00","stay_min":90,"note":"早到"},{"poi_id":"B","time":"12:00","stay_min":60},{"poi_id":"C","time":"15:00","stay_min":120}]}]}"#])
         let engine = ItineraryEngine(source: source, llm: llm, context: ctx)
 
@@ -69,10 +70,11 @@ final class ItineraryEngineTests: XCTestCase {
         XCTAssertEqual(trip.status, .ready)
         XCTAssertEqual(trip.sortedDays.count, 1)
 
-        // 3 个 POI + 2 段交通，交替排列
+        // 4 个 POI + 3 段交通，交替排列；午餐 B 插在第三景点（时刻线 12:00–13:30 段）之后。
         let items = trip.sortedDays[0].sortedItems
-        XCTAssertEqual(items.map(\.kind), [.sight, .transit, .food, .transit, .sight])
-        XCTAssertEqual(items.compactMap(\.poiId), ["A", "B", "C"])
+        XCTAssertEqual(items.map(\.kind),
+                       [.sight, .transit, .sight, .transit, .sight, .transit, .food])
+        XCTAssertEqual(items.compactMap(\.poiId), ["A", "C", "D", "B"])
         XCTAssertEqual(items.first?.plannedTime, "09:00")
         XCTAssertEqual(items.first?.stayLabel, "约 1.5 小时")
 
@@ -114,7 +116,9 @@ final class ItineraryEngineTests: XCTestCase {
     func testMultiDayAndTransitCounts() async throws {
         let ctx = try TestSupport.makeContext()
         let source = MockSource()
-        source.byTag = ["景点": [cand("A"), cand("B"), cand("C"), cand("D")]]
+        // 点间留 ~430m 真实间距：mock 路网 1200m 不超过 3× 直线，不触发 P6.3 跨水回填（保持 1 段 1 次调用）。
+        source.byTag = ["景点": [cand("A", lng: 116.400), cand("B", lng: 116.405),
+                              cand("C", lng: 116.410), cand("D", lng: 116.415)]]
         let llm = MockLLM([#"{"days":[{"day":1,"items":[{"poi_id":"A"},{"poi_id":"B"}]},{"day":2,"items":[{"poi_id":"C"},{"poi_id":"D"}]}]}"#])
         let engine = ItineraryEngine(source: source, llm: llm, context: ctx)
 
@@ -135,7 +139,7 @@ final class ItineraryEngineTests: XCTestCase {
             "美食": [cand("F1", .food)],
             "住宿": [hotel("H1", rating: 4.8), hotel("H2", rating: 4.5)],
         ]
-        // LLM 即便误引用住宿 H1，因其不在行程候选里也会被丢弃。
+        // LLM 已被移出几何步骤；住宿 H1 无论如何不进动线。
         let llm = MockLLM([#"{"days":[{"day":1,"items":[{"poi_id":"S1"},{"poi_id":"F1"},{"poi_id":"H1"}]}]}"#])
         let engine = ItineraryEngine(source: source, llm: llm, context: ctx)
 
@@ -143,7 +147,8 @@ final class ItineraryEngineTests: XCTestCase {
 
         let poiIDs = trip.sortedDays[0].sortedItems.compactMap(\.poiId)
         XCTAssertFalse(poiIDs.contains("H1"))                       // 住宿不进每日动线
-        XCTAssertEqual(Set(poiIDs), ["S1", "F1"])
+        // v2（D1）：单景点日时刻线未跨午窗 → F1 不插入动线（转入附近美食推荐）。
+        XCTAssertEqual(Set(poiIDs), ["S1"])
         XCTAssertEqual(trip.lodgingOptions.map(\.id), ["H1", "H2"]) // 按评分降序成清单
         XCTAssertEqual(trip.lodgingOptions.first?.rating, 4.8)
     }
