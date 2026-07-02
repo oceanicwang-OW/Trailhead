@@ -1,7 +1,8 @@
 //  TravelEstimator.swift
-//  行段时间估算（PDR §4.7 / §5）。haversine × 模式速度 → 分钟，仅用于**排序与卡点**的时间估算，
-//  非最终展示（展示仍走真实 source.route）。每段模式复用同一 ItineraryDayBuilder.mode()，
-//  避免估时与展示两套逻辑各判各的（B4）；mode() 的水域兜底（P6.3）已落地，跨海段自动走轮渡档。纯函数。
+//  行段时间估算（PDR §4.7 / §5，v2 含 D4 绕行系数）。haversine × circuity × 模式速度 → 分钟，
+//  仅用于**排序与卡点**的时间估算，非最终展示（展示仍走真实 source.route）。每段模式复用同一
+//  ItineraryDayBuilder.mode()，避免估时与展示两套逻辑各判各的（B4）；mode() 的水域兜底（P6.3
+//  WaterGate）已落地，跨海段自动走轮渡档。纯函数。
 
 import Foundation
 
@@ -18,10 +19,22 @@ public enum TravelEstimator {
         }
     }
 
+    /// 绕行系数 circuity factor（D4，可配）：直线×速度系统性低估城市路网时间，
+    /// 估算距离 = haversine × circuity[mode]。步行 1.25 / 公交 1.40 / 驾车 1.35 / 列车·轮渡 1.0
+    /// （轮渡近似直线航路，不走路网）。
+    public static func circuity(for mode: TransitMode) -> Double {
+        switch mode {
+        case .walk:           return 1.25
+        case .bus, .metro:    return 1.40
+        case .drive, .taxi:   return 1.35
+        case .train, .ferry:  return 1.0
+        }
+    }
+
     /// 估算两点间行段用时（分钟，四舍五入）。`city` 为城市 adcode（决定远途走公交/驾车）。
     public static func minutes(from: POICandidate, to: POICandidate, city: String) -> Int {
         let mode = ItineraryDayBuilder.mode(from: from, to: to, city: city)
-        let meters = ItineraryDayBuilder.haversineMeters(from, to)
+        let meters = ItineraryDayBuilder.haversineMeters(from, to) * circuity(for: mode)
         let metersPerMinute = speedKmh(for: mode) * 1000 / 60
         guard metersPerMinute > 0 else { return 0 }
         return Int((meters / metersPerMinute).rounded())

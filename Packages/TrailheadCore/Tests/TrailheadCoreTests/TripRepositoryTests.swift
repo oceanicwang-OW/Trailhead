@@ -280,12 +280,15 @@ final class TripRepositoryTests: XCTestCase {
         let ctx = try TestSupport.makeContext()
         let repo = TripRepository(context: ctx)
         let source = RegenerateSpySource()
+        // v2（D1）：插餐基于临时时刻线——3 景点使时刻线跨越午窗中点 12:30，午餐才会插入。
         source.byTag = ["景点": [
             regenCandidate("X", kind: .sight, lat: 30.0, lng: 104.0),
-            regenCandidate("Y", kind: .food, lat: 30.03, lng: 104.03),
+            regenCandidate("Z", kind: .sight, lat: 30.01, lng: 104.01),
+            regenCandidate("W", kind: .sight, lat: 30.02, lng: 104.02),
+            regenCandidate("Y", kind: .food, lat: 30.015, lng: 104.015),
         ]]
         let llm = RegenerateLLM([
-            #"{"days":[{"day":1,"items":[{"poi_id":"X","time":"10:00","stay_min":90,"note":"new"},{"poi_id":"Y","time":"12:00","stay_min":60},{"poi_id":"GHOST"}]}]}"#,
+            #"{"days":[{"day":1,"items":[{"poi_id":"X","time":"10:00","stay_min":90,"note":"new"},{"poi_id":"GHOST"}]}]}"#,
         ])
 
         let originalDate = Date(timeIntervalSince1970: 1_700_000_000)
@@ -310,15 +313,43 @@ final class TripRepositoryTests: XCTestCase {
         XCTAssertEqual(day1.sortedItems.compactMap(\.poiId), ["KEEP"])
 
         let regenerated = day0.sortedItems
-        XCTAssertEqual(regenerated.map(\.kind), [.sight, .transit, .food])
-        XCTAssertEqual(regenerated.compactMap(\.poiId), ["X", "Y"])
-        XCTAssertEqual(regenerated.map(\.order), [0, 1, 2])
+        // 动线 X→Z→(午餐 Y 顺路)→W；相邻点间补交通段。
+        XCTAssertEqual(regenerated.compactMap(\.poiId), ["X", "Z", "Y", "W"])
+        XCTAssertEqual(regenerated.map(\.kind),
+                       [.sight, .transit, .sight, .transit, .food, .transit, .sight])
+        XCTAssertEqual(regenerated.map(\.order), Array(0..<7))
         // 时间/停留改由确定性模拟器产出：首点从 dayStart 09:00 起、景点默认停留 90 分；note 留空（P7 未做）。
         XCTAssertEqual(regenerated[0].plannedTime, "09:00")
         XCTAssertEqual(regenerated[0].stayLabel, "约 1.5 小时")
         XCTAssertNil(regenerated[0].note)
         XCTAssertTrue(regenerated.allSatisfy { !oldDay0IDs.contains($0.id) })
-        XCTAssertEqual(source.routePairs, ["X-Y"])
+        XCTAssertEqual(source.routePairs, ["X-Z", "Z-Y", "Y-W"])
+    }
+
+    func testRegenerateDayExcludesPOIsAlreadyUsedByOtherDays() async throws {
+        // D9：单日重生成必须排除其余各天已排的 poi_id——即便它是召回池里评分最高的点。
+        let ctx = try TestSupport.makeContext()
+        let repo = TripRepository(context: ctx)
+        let source = RegenerateSpySource()
+        source.byTag = ["景点": [
+            regenCandidate("SHARED", kind: .sight, lat: 30.0, lng: 104.0),
+            regenCandidate("X", kind: .sight, lat: 30.005, lng: 104.005),
+        ]]
+        let llm = RegenerateLLM([#"{"days":[]}"#])
+
+        let oldA = PlanItem.poi(0, kind: .sight, time: "09:00", name: "Old A", subtype: "景点", note: "", stay: "")
+        oldA.poiId = "OLD-A"; oldA.lat = 30.0; oldA.lng = 104.0
+        let day0 = DayPlan(dayIndex: 0, items: [oldA])
+        let sharedItem = PlanItem.poi(0, kind: .sight, time: "09:00", name: "Shared", subtype: "景点", note: "", stay: "")
+        sharedItem.poiId = "SHARED"; sharedItem.lat = 30.0; sharedItem.lng = 104.0
+        let day1 = DayPlan(dayIndex: 1, items: [sharedItem])
+        let trip = try repo.create(city: "成都", adcode: "510100", nights: 1,
+                                   prefs: TripPrefs(tags: ["景点"]), days: [day0, day1])
+
+        try await repo.regenerateDay(day0, in: trip, source: source, llm: llm)
+
+        XCTAssertEqual(day0.sortedItems.compactMap(\.poiId), ["X"])            // SHARED 被排除
+        XCTAssertEqual(day1.sortedItems.compactMap(\.poiId), ["SHARED"])       // 其它天不动
     }
 
     func testRegenerateDayNoCandidatesLeavesExistingItems() async throws {

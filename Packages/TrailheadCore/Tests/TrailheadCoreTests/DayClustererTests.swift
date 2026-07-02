@@ -80,4 +80,44 @@ final class DayClustererTests: XCTestCase {
         XCTAssertEqual(out.filter(\.isEmpty).count, 1)
         XCTAssertEqual(Set(out.flatMap { $0.map(\.id) }), Set(["a", "b"]))
     }
+
+    // MARK: - D6 确定性 / D7 时间预算
+
+    func testDeterministicSameInputSameOutput() {
+        // D6：同输入两次聚类逐字段一致（无随机源）。
+        let cands = (0..<9).map { poi("p\($0)", Double($0 % 3), Double($0 / 3)) }
+        let scores = Dictionary(uniqueKeysWithValues: cands.enumerated().map { ($1.id, 3.5 + Double($0) * 0.1) })
+        let a = DayClusterer.cluster(sights: cands, days: 3, maxSightsPerDay: 4, scores: scores)
+        let b = DayClusterer.cluster(sights: cands, days: 3, maxSightsPerDay: 4, scores: scores)
+        XCTAssertEqual(a.map { $0.map(\.id) }, b.map { $0.map(\.id) })
+    }
+
+    func testSeedOffsetIsExplicitDiversityKnob() {
+        // 「重新生成的多样性」由显式 seedOffset 承担；同 offset 仍确定性。
+        let cands = (0..<6).map { poi("p\($0)", Double($0), Double($0 % 2)) }
+        let a = DayClusterer.cluster(sights: cands, days: 2, maxSightsPerDay: 4, seedOffset: 1)
+        let b = DayClusterer.cluster(sights: cands, days: 2, maxSightsPerDay: 4, seedOffset: 1)
+        XCTAssertEqual(a.map { $0.map(\.id) }, b.map { $0.map(\.id) })
+    }
+
+    func testTimeBudgetSplitsTwoMuseumsAcrossDays() {
+        // D7：双博物馆（各 120 分）同团，时间预算 220 装不下两个（240>220）→ 拆到不同天；
+        // 纯点数容量（capacity=2）看不见这一点。
+        let m1 = poi("m1", 0, 0), m2 = poi("m2", 0, 0.001), s = poi("s", 5, 5)
+        let stays = ["m1": 120, "m2": 120, "s": 90]
+        let out = DayClusterer.cluster(sights: [m1, m2, s], days: 2, maxSightsPerDay: 4,
+                                       stayMinutes: stays, stayBudget: 220)
+        for day in out {
+            let ids = Set(day.map(\.id))
+            XCTAssertFalse(ids.isSuperset(of: ["m1", "m2"]), "双博物馆不应同日：\(ids)")
+        }
+        XCTAssertEqual(Set(out.flatMap { $0.map(\.id) }), ["m1", "m2", "s"])   // 不丢点
+    }
+
+    func testWithoutBudgetTwoMuseumsStayTogether() {
+        // 对照组：关闭预算（nil）→ 地理同团的双博物馆仍在同一天。
+        let m1 = poi("m1", 0, 0), m2 = poi("m2", 0, 0.001), s = poi("s", 5, 5)
+        let out = DayClusterer.cluster(sights: [m1, m2, s], days: 2, maxSightsPerDay: 4)
+        XCTAssertTrue(out.contains { Set($0.map(\.id)) == ["m1", "m2"] })
+    }
 }

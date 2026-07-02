@@ -10,7 +10,15 @@ public enum DayRouter {
     public static func route(_ stops: [POICandidate],
                              entryAnchor: (lat: Double, lng: Double)? = nil,
                              maxIterations: Int = 20) -> [POICandidate] {
-        guard stops.count > 1 else { return stops }
+        routeWithDiagnostics(stops, entryAnchor: entryAnchor, maxIterations: maxIterations).tour
+    }
+
+    /// 带诊断的排序（D8）：`converged` = 2-opt 在步数上限内正常收敛（未触顶退出），
+    /// 供 ItineraryFeasibility 的软断言使用——「总长不增」是构造保证的恒真式，验不出问题。
+    public static func routeWithDiagnostics(_ stops: [POICandidate],
+                                            entryAnchor: (lat: Double, lng: Double)? = nil,
+                                            maxIterations: Int = 20) -> (tour: [POICandidate], converged: Bool) {
+        guard stops.count > 1 else { return (stops, true) }
         // 锚点仅用于距离计算，包成一个临时候选，复用同一 haversine。
         let anchor = entryAnchor.map {
             POICandidate(id: "__anchor__", name: "", kind: .sight, subtype: "", lat: $0.lat, lng: $0.lng)
@@ -38,7 +46,9 @@ public enum DayRouter {
 
     /// 2-opt：反转任意子段 [i...j]，若开放路径总长变短则接受，迭代至无改进或达步数上限。
     /// 锚点为固定前缀（不进 tour 数组），其到首点的边在 pathLength 内计入，故锚点位置不被打乱。
-    private static func twoOpt(_ initial: [POICandidate], anchor: POICandidate?, maxIterations: Int) -> [POICandidate] {
+    /// 返回 converged=false 表示触顶退出（最后一轮仍有改进）。
+    private static func twoOpt(_ initial: [POICandidate], anchor: POICandidate?,
+                               maxIterations: Int) -> (tour: [POICandidate], converged: Bool) {
         var tour = initial
         var improved = true
         var iter = 0
@@ -56,7 +66,7 @@ public enum DayRouter {
                 }
             }
         }
-        return tour
+        return (tour, !improved)
     }
 
     /// 开放路径总长（含锚点→首点的衔接段，若有）。

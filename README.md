@@ -116,39 +116,56 @@ Trailhead/
 - 新建：真实出发日期 `DatePicker`（原为写死文案）；地图随行程/天数自动定位（原固定京都）。
 - 美食/住宿卡片**点击在地图定位**（`MapFocus`）；侧栏行程**右键删除**（带二次确认）。
 
-## 编排层改造（确定性几何）
+## 编排层改造（确定性几何，v2）
 
-把「怎么排」从大模型盲排收回为**确定性算法**（详见 [`PDR-Trailhead编排层改造.md`](PDR-Trailhead编排层改造.md)）。
-`planStops` 内部替换为 6 步纯几何流水线（签名不变、`days==1` 单日重生成复用）：
+把「怎么排」从大模型盲排收回为**确定性算法**（v1 详见 [`PDR-Trailhead编排层改造.md`](PDR-Trailhead编排层改造.md)，
+v2 修订 D1–D9 详见 [`PDR-Trailhead编排层改造-v2.md`](PDR-Trailhead编排层改造-v2.md)）。
+`planStops` 内部为 8 步纯几何流水线（对外契约不变、`days==1` 单日重生成复用；新增可缺省的
+`startDate` 参数推导每日 weekday）：
 
 ```
-拆分(sights含other/food) → DayClusterer 聚类分天(k-means+容量约束) → DayRouter 簇内排序(贪心NN+2-opt)
- → MealSlotter 餐饮卡点(就近高分) → ScheduleSimulator 前向模拟赋 time/stayMin(营业窗过滤) → 装配 PlannedStop
+拆分(sights含other/food) → DayClusterer 聚类分天(k-means 分数播种 D6 + 点数/时间预算容量 D7)
+ → 逐天: DayRouter 簇内排序(贪心NN+2-opt) → ScheduleSimulator 第一遍(仅景点, 临时时刻线)
+   → MealSlotter 插餐(餐窗中点定位+顺路绕行选店 D1) → ScheduleSimulator 第二遍(终版 time/stayMin)
+ → SpillRepair 跨天重插(丢点不静默消失 D3) → 装配 PlannedStop → ItineraryFeasibility 出口自检
 ```
 
-- `time`/`stayMin` 由**模拟器确定性产出**（营业窗内、时间单调），不再由 LLM 拍脑袋；`CandidateCuration`
+- **v2 核心增益**：插餐不再靠猜（D1 两遍模拟）；「周一闭馆」逐日生效（D2 `OpenSchedule.windows(on:)`）；
+  招牌点不再静默消失（D3 按分牺牲 + spill 池 + 跨天重插）；估时不再系统性乐观（D4 绕行系数
+  步行 1.25/公交 1.40/驾车 1.35）；早到超 45min 不再干等（D5 交换/后移）。
+- **确定性契约（D6）**：同输入必同输出（无随机源，平手一律按 poi_id 破平）；「重新生成的多样性」由
+  显式 `seedOffset` 承担。回归可对两次输出做逐字段 diff。
+- `time`/`stayMin` 由**模拟器确定性产出**（当日营业窗内、时间单调）；`CandidateCuration`
   无评分点按中性分 4.0 排序，招牌景点不再沉底。
-- 出口 `ItineraryFeasibility` 自检器强制过：违规丢弃、返回最优可行子集，不抛错。
-- **跨水域段兜底（P6.3）**：`mode()` 先过 `WaterGate`——两端分处离岛内外时强制 `.ferry`（轮渡），
-  不抬 1500m 步行阈值，短距离跨海（如厦门本岛↔鼓浪屿）不再误判步行；估时同源走轮渡速度档。
-  离岛区当前配了鼓浪屿（`WaterGate.regions`，可扩）。
+- 出口 `ItineraryFeasibility` 自检器强制过：硬违规丢弃、返回最优可行子集，不抛错；spill 最终
+  丢弃记 warning；2-opt 收敛与 <30° 急回折记 info（D8）。
+- **跨水域段双层兜底（P6.3/A1，不抬 1500m 阈值）**：`mode()` 先过 `WaterGate`——两端分处离岛内外时
+  强制 `.ferry`（轮渡），估时同源走轮渡速度档（离岛区当前配了鼓浪屿，`WaterGate.regions` 可扩）；
+  未配置进 `WaterGate` 的跨水段由 `routedSegment` 真实路线回填——步行路网距离 >3× 直线
+  （或步行请求失败）即改用驾车/公交段。
 - **LLM 只补文案（P7.1 NoteWriter）**：几何定稿后，`NoteWriter` 作为**可选、非破坏性**的最后一步，
   只为定稿 stops 补 `note` + 每日主题（`DayPlan.theme`）——越界（未知 day/poi_id）忽略、报错/畸形整体降级留空，
   永不改动顺序时间、永不抛错。`planStops` 本身保持 100% 确定性（不含 LLM），文案层在引擎/重生成层叠加。
+- **单日重生成排除集（D9）**：`regenerateDay` 预先滤掉其余各天已排 poi_id，并传 `day.date` 使周闭馆生效。
 - 各模块均为纯函数、不触碰 `ModelContext`（`PlanItem` 仍只在 `buildItems(@MainActor)` 内建）。
 
 **已知限制（待后续增量）**
 
 - **轮渡估时偏乐观**：`WaterGate` 命中后按航速粗估，未计候船 / 登离船耗时，短跨海整体偏快；后续可加固定卡点。
-- **水域兜底为圆形近似**：离岛用「圆心+半径」罩，非真实海岸线；覆盖已配离岛，其余跨海仍可能漏判（可继续扩 `regions`）。
+- **水域兜底为圆形近似**：离岛用「圆心+半径」罩，非真实海岸线；覆盖已配离岛，其余跨海由
+  `routedSegment` 真实路线回填兜底（仅作用于展示段，估时仍按初判模式档）。
 - **NoteWriter 每次生成/单日重生成各发一次 LLM 调用**：文案失败自动降级留空，不阻断行程；成本换来可解释性。
-- 行段估时用 haversine × 模式速度作代理排序/卡点（非展示），`planStops` 签名无 city，故估时按步行/驾车档。
+- 行段估时用 haversine × circuity × 模式速度作代理排序/卡点（非展示，PDR v2 未决③）；`planStops`
+  内部无 city，故估时按步行/驾车档。真实路网距离矩阵留待有真实反馈后评估。
+- `dayStart`/`dayEnd` 本期写死 09:00–20:00（PDR v2 未决①），做成常量，待验证稳定后开放 `TripPrefs`/UI。
 
 ## 进度
 
-> 单测：**181 个 Core + 3 个 App 全过**（`make test`）；`make build-mac` 通过。仓库转私有后 CI 停用，改为本地 build/test 验证。
+> 单测：**Core（含编排层 v2 回归）+ App 全过**（`make test`）；仓库已转 public，CI 恢复双端 build + lint。
 > **M1 数据闭环达成**：端到端「输入偏好 → 库里出现完整可信行程」已通过（mock 注入 + 厦门/鼓浪屿 live 全链路验证）。
-> **编排层改造 P0–P8 全部落地**（确定性几何 + 水域兜底 P6.3 + LLM 文案 P7.1），详见上节「编排层改造」。
+> **编排层改造 P0–P8 全部落地并升级 v2**（两遍模拟插餐 D1、周闭馆 D2、spill 跨天重插 D3、
+> 绕行系数 D4、过等处理 D5、确定性 D6、时间预算 D7、有意义软断言 D8、重生成排除集 D9 +
+> 水域兜底 P6.3 + LLM 文案 P7.1），详见上节「编排层改造」。
 
 | 阶段 | 任务 | 状态 |
 |---|---|---|
