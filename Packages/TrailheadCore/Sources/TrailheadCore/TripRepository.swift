@@ -143,12 +143,18 @@ public struct TripRepository {
         let pinned = ItineraryEngine.pinnedIDs(in: candidates, freeText: trip.prefs.freeText)
         let itineraryCandidates = CandidateCuration.curate(candidates.filter { $0.kind != .lodging },
                                                            tags: trip.prefs.tags, pinned: pinned)
-        guard !itineraryCandidates.isEmpty else { throw ItineraryEngine.EngineError.noCandidates }
+        // D9 排除集：其余各天已排的全部 poi_id 预先滤掉，重生成的那天不得选中别天已有的点。
+        let otherDayPOIs = Set(trip.days.filter { $0.id != day.id }
+            .flatMap { $0.items.compactMap(\.poiId) })
+        let available = itineraryCandidates.filter { !otherDayPOIs.contains($0.id) }
+        guard !available.isEmpty else { throw ItineraryEngine.EngineError.noCandidates }
 
+        // day.date 使 D2 周闭馆按该天 weekday 生效。
         let perDay = try await ItineraryDayBuilder.planStops(prefs: trip.prefs,
-                                                             candidates: itineraryCandidates,
+                                                             candidates: available,
                                                              days: 1,
-                                                             llm: llm)
+                                                             llm: llm,
+                                                             startDate: day.date)
         guard let stops = perDay.first, !stops.isEmpty else {
             throw ItineraryEngine.EngineError.emptyPlan
         }
