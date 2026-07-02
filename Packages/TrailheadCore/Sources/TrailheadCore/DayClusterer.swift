@@ -1,7 +1,10 @@
 //  DayClusterer.swift
-//  聚类分天（PDR §4.4）。把「哪些点排在同一天」从大模型盲排收回为**确定性几何**：
+//  聚类分天（PDR §4.4，v2 含 D6/D7）。把「哪些点排在同一天」从大模型盲排收回为**确定性几何**：
 //  投影到局部平面 → k-means 成团 → 容量约束均衡分配 → 天序按质心 NN 链接（相邻天地理相邻）。
-//  纯函数、确定性（farthest-first 初始化，无随机），便于单测。sights<days 降级为轻量天，不抛错。
+//  D6 确定性播种：首质心取综合分最高点（平手按 poi_id 字典序），其后 farthest-point；
+//  同输入必同输出，「重新生成的多样性」由显式 seedOffset 承担而非随机性副作用。
+//  D7 时间预算容量：Σ停留 ≤ 预算，点数或时间任一超限即满簇（双博物馆吃满一天不再超编）。
+//  纯函数。sights<days 降级为轻量天，不抛错。
 
 import Foundation
 
@@ -15,9 +18,19 @@ public enum DayClusterer {
         }
     }
 
+    /// 时间预算比例 α（D7，可配）：Σ停留 ≤ α × (dayEnd − dayStart)，剩余留给通勤与餐饮。
+    public static let defaultTimeBudgetRatio = 0.65
+
     /// 输出长度恒为 `days`：每天一组景点；点数<天数时尾部为轻量（空）天。
+    /// `scores`：poi_id → 综合分（D6 播种用，缺省回退 rating ?? 中性分）。
+    /// `stayMinutes` + `stayBudget`：D7 时间预算容量（stayBudget=nil 关闭）。
+    /// `seedOffset`：显式轮换首质心（重新生成时的确定性多样性来源）。
     public static func cluster(sights: [POICandidate], days: Int,
-                               maxSightsPerDay: Int, iterations: Int = 10) -> [[POICandidate]] {
+                               maxSightsPerDay: Int, iterations: Int = 10,
+                               scores: [String: Double] = [:],
+                               stayMinutes: [String: Int] = [:],
+                               stayBudget: Int? = nil,
+                               seedOffset: Int = 0) -> [[POICandidate]] {
         guard days > 0 else { return [] }
         guard !sights.isEmpty else { return Array(repeating: [], count: days) }
 
@@ -25,8 +38,8 @@ public enum DayClusterer {
         let k = min(days, n)
         let pts = GeoProjection.project(sights)
 
-        // k-means（确定性 farthest-first 初始化 → 迭代赋质心）。
-        var centroids = initialCentroids(pts, k: k)
+        // k-means（D6 确定性播种 → 迭代赋质心）。
+        var centroids = initialCentroids(pts, k: k, sights: sights, scores: scores, seedOffset: seedOffset)
         var labels = [Int](repeating: 0, count: n)
         for _ in 0..<max(1, iterations) {
             for i in 0..<n { labels[i] = nearest(pts[i], centroids) }
@@ -42,15 +55,29 @@ public enum DayClusterer {
             }
         }
 
-        // 容量约束分配：容量 = clamp(ceil(N/days), [2, maxSightsPerDay])；
-        // 按 regret（次近−最近）降序逐点分配，满则退最近可用簇，全满则溢出到最近簇（保证不丢点）。
+        // 容量约束分配：点数容量 = clamp(ceil(N/days), [2, maxSightsPerDay])；时间预算（D7）
+        // 任一超限即满簇。按 regret（次近−最近）降序逐点分配（平手 poi_id），满则退最近可用簇，
+        // 全满则溢出到最近簇（保证不丢点，超编交由模拟器按分牺牲）。
         let capacity = max(2, min(maxSightsPerDay, (n + days - 1) / days))
         var buckets = Array(repeating: [Int](), count: k)
         var counts = [Int](repeating: 0, count: k)
-        for i in (0..<n).sorted(by: { regret($0, pts, centroids) > regret($1, pts, centroids) }) {
+        var stayLoad = [Int](repeating: 0, count: k)
+        func isFull(_ c: Int, adding stay: Int) -> Bool {
+            if counts[c] >= capacity { return true }
+            if let budget = stayBudget, stayLoad[c] + stay > budget { return true }
+            return false
+        }
+        let order = (0..<n).sorted {
+            let (ra, rb) = (regret($0, pts, centroids), regret($1, pts, centroids))
+            return ra == rb ? sights[$0].id < sights[$1].id : ra > rb
+        }
+        for i in order {
+            let stay = stayMinutes[sights[i].id] ?? 0
             let ranked = (0..<k).sorted { dist(pts[i], centroids[$0]) < dist(pts[i], centroids[$1]) }
-            let target = ranked.first(where: { counts[$0] < capacity }) ?? ranked[0]
-            buckets[target].append(i); counts[target] += 1
+            let target = ranked.first(where: { !isFull($0, adding: stay) }) ?? ranked[0]
+            buckets[target].append(i)
+            counts[target] += 1
+            stayLoad[target] += stay
         }
 
         // 天序：对簇质心跑一次 NN 路径，使相邻两天地理相邻；不足天数尾部补轻量天。
@@ -76,13 +103,24 @@ public enum DayClusterer {
         return sorted[1] - sorted[0]
     }
 
-    /// farthest-first 确定性初始化：首簇取最西点（min x），其余每次取「到已选簇最小距离最大」的点。
-    private static func initialCentroids(_ pts: [GeoProjection.Point], k: Int) -> [GeoProjection.Point] {
-        var chosen = [(0..<pts.count).min(by: { pts[$0].x < pts[$1].x }) ?? 0]
+    /// D6 确定性播种：首质心取综合分最高点（平手 poi_id 升序；seedOffset 显式轮换），
+    /// 其后每个质心取「到已选质心集合最小距离最大」的点（平手同样按 poi_id 破平）。
+    private static func initialCentroids(_ pts: [GeoProjection.Point], k: Int,
+                                         sights: [POICandidate], scores: [String: Double],
+                                         seedOffset: Int) -> [GeoProjection.Point] {
+        let byScore = (0..<pts.count).sorted {
+            let (sa, sb) = (ScheduleSimulator.score(sights[$0], scores),
+                            ScheduleSimulator.score(sights[$1], scores))
+            return sa == sb ? sights[$0].id < sights[$1].id : sa > sb
+        }
+        var chosen = [byScore[((seedOffset % pts.count) + pts.count) % pts.count]]
         while chosen.count < k {
             let next = (0..<pts.count)
                 .filter { !chosen.contains($0) }
-                .max(by: { minDist($0, chosen, pts) < minDist($1, chosen, pts) }) ?? 0
+                .max { a, b in
+                    let (da, db) = (minDist(a, chosen, pts), minDist(b, chosen, pts))
+                    return da == db ? sights[a].id > sights[b].id : da < db
+                } ?? 0
             chosen.append(next)
         }
         return chosen.map { pts[$0] }
