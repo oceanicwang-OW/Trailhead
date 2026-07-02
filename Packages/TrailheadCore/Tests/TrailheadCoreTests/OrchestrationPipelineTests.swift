@@ -91,13 +91,15 @@ final class OrchestrationPipelineTests: XCTestCase {
         XCTAssertTrue(daySightSets.contains(["s4", "s5", "s6"]))
     }
 
-    // MARK: - P6.3 短距跨水回填（A1：不抬 1500m 阈值，由真实路线回填兜底）
+    // MARK: - P6.3 短距跨水回填（A1：不抬 1500m 阈值；已配置离岛由 WaterGate 判轮渡，
+    // 本组覆盖**未配置进 WaterGate** 的跨水段——由 routedSegment 真实路线回填兜底。
+    // 坐标刻意取 WaterGate.regions 之外（长江口某处），mode() 初判仍为步行。
 
     @MainActor
     func testShortCrossWaterSegmentBackfillsToNonWalk() async {
-        // 轮渡码头 ↔ 鼓浪屿：直线 ~700m 初判步行，但步行路网 6km（>3× 直线）→ 回填驾车段。
-        let ferry = sight("ferry", 24.4460, 118.0820)
-        let island = sight("island", 24.4450, 118.0750)
+        // 未配置离岛的短距跨水：直线 ~700m 初判步行，但步行路网 6km（>3× 直线）→ 回填驾车段。
+        let ferry = sight("ferry", 31.3900, 121.5000)
+        let island = sight("island", 31.3900, 121.5074)
         let source = CrossWaterSpySource()
         let stops = [PlannedStop(candidate: ferry, time: "09:00", stayMin: 60, note: nil),
                      PlannedStop(candidate: island, time: "10:30", stayMin: 90, note: nil)]
@@ -112,8 +114,8 @@ final class OrchestrationPipelineTests: XCTestCase {
     @MainActor
     func testWalkRouteFailureBackfillsToNonWalk() async {
         // 步行路线请求失败（水域不可达）→ 同样回填非步行，不丢交通段。
-        let ferry = sight("ferry", 24.4460, 118.0820)
-        let island = sight("island", 24.4450, 118.0750)
+        let ferry = sight("ferry", 31.3900, 121.5000)
+        let island = sight("island", 31.3900, 121.5074)
         let source = CrossWaterSpySource()
         source.walkFails = true
         let stops = [PlannedStop(candidate: ferry, time: "09:00", stayMin: 60, note: nil),
@@ -126,16 +128,30 @@ final class OrchestrationPipelineTests: XCTestCase {
     @MainActor
     func testNormalWalkSegmentStaysWalk() async {
         // 对照组：步行路网未超 3× 直线 → 保持步行（阈值语义不变，无过度回填）。
-        let a = sight("a", 24.4460, 118.0820)
-        let b = sight("b", 24.4450, 118.0750)
+        let a = sight("a", 31.3900, 121.5000)
+        let b = sight("b", 31.3900, 121.5074)
         let source = CrossWaterSpySource()
-        source.walkMeters = 900                                           // ~1.2× 直线
+        source.walkMeters = 900                                           // ~1.3× 直线
         let stops = [PlannedStop(candidate: a, time: "09:00", stayMin: 60, note: nil),
                      PlannedStop(candidate: b, time: "10:30", stayMin: 90, note: nil)]
 
         let items = await ItineraryDayBuilder.buildItems(from: stops, source: source, city: "")
         XCTAssertEqual(items.first { $0.kind == .transit }?.transitMode, .walk)
         XCTAssertEqual(source.requestedModes, [.walk])                    // 未触发第二次请求
+    }
+
+    @MainActor
+    func testConfiguredIslandCrossingUsesFerryDirectly() async {
+        // 已配置离岛（鼓浪屿）：WaterGate 命中 → mode() 直接判轮渡，不走步行试探。
+        let wharf = sight("wharf", 24.4460, 118.0820)                    // 本岛轮渡码头（圈外）
+        let island = sight("gulangyu", 24.4470, 118.0670)                // 鼓浪屿岛心（圈内）
+        let source = CrossWaterSpySource()
+        let stops = [PlannedStop(candidate: wharf, time: "09:00", stayMin: 60, note: nil),
+                     PlannedStop(candidate: island, time: "10:30", stayMin: 90, note: nil)]
+
+        let items = await ItineraryDayBuilder.buildItems(from: stops, source: source, city: "")
+        XCTAssertEqual(items.first { $0.kind == .transit }?.transitMode, .ferry)
+        XCTAssertEqual(source.requestedModes, [.ferry])
     }
 
     func testWeekdayMappingMondayFirst() {

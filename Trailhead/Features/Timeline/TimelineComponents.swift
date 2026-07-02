@@ -176,6 +176,7 @@ struct TransportRow: View {
         case .taxi:  return "car.fill"
         case .drive: return "car.fill"
         case .train: return "train.side.front.car"
+        case .ferry: return "ferry.fill"
         case .none:  return "arrow.down"
         }
     }

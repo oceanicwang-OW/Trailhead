@@ -18,7 +18,7 @@ public enum ItineraryDayBuilder {
     public static func planStops(prefs: TripPrefs, candidates: [POICandidate],
                                  days: Int, llm: LLMProvider,
                                  startDate: Date? = nil) async throws -> [[PlannedStop]] {
-        _ = llm  // 几何步骤不使用 LLM；P7（NoteWriter）本期不做，保留参数维持对外契约不变（C3）。
+        _ = llm  // 几何步骤不使用 LLM（保持 100% 确定性）；文案由上层 NoteWriter 叠加（P7.1），参数保留维持对外契约（C3）。
 
         // 1. 按 kind 拆分：sights（含 other，即非食非住）/ food。住宿已在调用前剔除。
         let sights = candidates.filter { $0.kind != .food }
@@ -154,10 +154,11 @@ public enum ItineraryDayBuilder {
         minutes >= 60 ? "约 \(String(format: "%g", (Double(minutes) / 60 * 10).rounded() / 10)) 小时" : "\(minutes) 分钟"
     }
 
-    /// 短途步行；远途有 city 走公交、无 city 退化驾车（与 AmapClient.route 一致，标签不串）。
-    /// 注意（A1/P6.3）：直线阈值对短距离跨水不可靠（陆地↔鼓浪屿直线 <1500m 会被误判步行），
-    /// 不抬阈值，由 routedSegment 用真实路线回填兜底。
+    /// 跨水域强制轮渡（P6.3 WaterGate 水域兜底，先于阈值判定，已配置离岛不再误判步行）；
+    /// 否则短途步行；远途有 city 走公交、无 city 退化驾车（与 AmapClient.route 一致，标签不串）。
+    /// 未配置进 WaterGate 的跨水段由 routedSegment 的真实路线回填兜底（A1：不抬 1500m 阈值）。
     static func mode(from: POICandidate, to: POICandidate, city: String) -> TransitMode {
+        if WaterGate.crossesWater(from, to) { return .ferry }
         guard haversineMeters(from, to) > 1500 else { return .walk }
         return city.isEmpty ? .drive : .metro
     }

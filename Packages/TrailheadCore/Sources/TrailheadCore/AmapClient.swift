@@ -204,7 +204,8 @@ public struct AmapClient: POIDataSource {
             return try await pathRoute("/v5/direction/walking", origin, destination)
         case .drive, .taxi:
             return try await pathRoute("/v5/direction/driving", origin, destination)
-        case .metro, .bus, .train:
+        case .metro, .bus, .train, .ferry:
+            // 轮渡并入公交路线（高德公交换乘含轮渡段）；无 city 无法查公交，退化驾车（跨海驾车经跨海大桥/隧道，仍优于步行）。
             guard !city.isEmpty else {
                 return try await pathRoute("/v5/direction/driving", origin, destination)  // 无 city 退化驾车
             }

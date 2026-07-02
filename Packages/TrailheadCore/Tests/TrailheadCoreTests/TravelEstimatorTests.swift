@@ -18,15 +18,17 @@ final class TravelEstimatorTests: XCTestCase {
         XCTAssertEqual(TravelEstimator.speedKmh(for: .bus), 18)
         XCTAssertEqual(TravelEstimator.speedKmh(for: .drive), 30)
         XCTAssertEqual(TravelEstimator.speedKmh(for: .taxi), 30)
+        XCTAssertEqual(TravelEstimator.speedKmh(for: .ferry), 12)
     }
 
     func testCircuityTable() {
-        // D4：步行 1.25 / 公交 1.40 / 驾车 1.35。
+        // D4：步行 1.25 / 公交 1.40 / 驾车 1.35；轮渡近似直线航路 1.0。
         XCTAssertEqual(TravelEstimator.circuity(for: .walk), 1.25)
         XCTAssertEqual(TravelEstimator.circuity(for: .metro), 1.40)
         XCTAssertEqual(TravelEstimator.circuity(for: .bus), 1.40)
         XCTAssertEqual(TravelEstimator.circuity(for: .drive), 1.35)
         XCTAssertEqual(TravelEstimator.circuity(for: .taxi), 1.35)
+        XCTAssertEqual(TravelEstimator.circuity(for: .ferry), 1.0)
     }
 
     func testShortSegmentUsesWalkSpeedWithCircuity() {
