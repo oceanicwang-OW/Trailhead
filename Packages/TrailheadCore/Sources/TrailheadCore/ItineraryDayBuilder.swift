@@ -45,11 +45,13 @@ public enum ItineraryDayBuilder {
         var previousExit: (lat: Double, lng: Double)?
         var dayOrders: [[POICandidate]] = []
         var spillPool: [(day: Int, stop: SpilledStop)] = []
+        var routerConverged: [Bool] = []
 
         for (dayIdx, cluster) in dayClusters.enumerated() {
             let wd = weekdays[min(dayIdx, weekdays.count - 1)]
-            // 3. 簇内排序（贪心NN + 2-opt；天间用上一天出口锚点衔接）。
-            let routed = DayRouter.route(cluster, entryAnchor: previousExit)
+            // 3. 簇内排序（贪心NN + 2-opt；天间用上一天出口锚点衔接；收敛标志供 D8 软断言）。
+            let (routed, converged) = DayRouter.routeWithDiagnostics(cluster, entryAnchor: previousExit)
+            routerConverged.append(converged)
             // 4. 第一遍模拟（仅景点）→ 临时时刻线；丢点按分牺牲进 spill 池（D1/D3）。
             let first = ScheduleSimulator.simulate(stops: routed, pace: pace, city: "", weekday: wd,
                                                    dayStart: dayStart, dayEnd: dayEnd, scores: scores)
@@ -67,11 +69,14 @@ public enum ItineraryDayBuilder {
         }
 
         // 7. SpillRepair：spill 按分数降序跨天重插；days==1 无处可去，直接进丢弃清单（D3）。
+        var dropped: [SpilledStop] = []
         if days > 1, !spillPool.isEmpty {
             let ctx = SpillRepair.Context(pace: pace, city: "", weekdays: weekdays,
                                           dayStart: dayStart, dayEnd: dayEnd, scores: scores,
                                           maxSightsPerDay: maxPerDay, stayBudget: stayBudget)
-            (dayOrders, _) = SpillRepair.repair(dayOrders: dayOrders, spill: spillPool, context: ctx)
+            (dayOrders, dropped) = SpillRepair.repair(dayOrders: dayOrders, spill: spillPool, context: ctx)
+        } else {
+            dropped = spillPool.map(\.stop)
         }
 
         // 8. 终版模拟（纯函数重放，与第 6/7 步一致）并装配 PlannedStop（Int 分钟 → "HH:mm"）；
@@ -87,8 +92,10 @@ public enum ItineraryDayBuilder {
             })
         }
 
-        // 出口自检（§7）：硬约束校验并返回最优可行子集，不抛错。
-        return ItineraryFeasibility.check(result, days: days, maxSightsPerDay: maxPerDay).plan
+        // 出口自检（§7）：硬约束校验并返回最优可行子集，不抛错；软约束记 warning/info。
+        return ItineraryFeasibility.check(result, days: days, maxSightsPerDay: maxPerDay,
+                                          weekdays: weekdays, dropped: dropped,
+                                          routerConverged: routerConverged).plan
     }
 
     /// 天序号 → weekday（1=周一…7=周日）。无日期返回 nil（D2 退化 base 语义）。

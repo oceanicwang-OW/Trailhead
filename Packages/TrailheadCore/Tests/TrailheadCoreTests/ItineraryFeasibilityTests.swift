@@ -1,5 +1,6 @@
 //  ItineraryFeasibilityTests.swift
-//  出口自检器（PDR §7）：硬约束——时间严格递增（Int 比较）、营业窗内、days≥2 无空天且≤上限。
+//  出口自检器（PDR §7，v2 含 D2/D3/D8）：硬约束——时间严格递增（Int 比较）、**当日**营业窗内、
+//  days≥2 无空天且≤上限。软：spill 丢弃 warning、2-opt 收敛与急回折 info。
 //  失败不抛错，返回最优可行子集（丢弃违规点）+ 报告。
 
 import Foundation
@@ -8,9 +9,10 @@ import XCTest
 
 final class ItineraryFeasibilityTests: XCTestCase {
 
-    private func stop(_ id: String, _ time: String, kind: ItemKind = .sight, openHours: String? = nil) -> PlannedStop {
+    private func stop(_ id: String, _ time: String, kind: ItemKind = .sight, openHours: String? = nil,
+                      lat: Double = 0, lng: Double = 0) -> PlannedStop {
         PlannedStop(candidate: POICandidate(id: id, name: id, kind: kind, subtype: "",
-                                            lat: 0, lng: 0, openHours: openHours),
+                                            lat: lat, lng: lng, openHours: openHours),
                     time: time, stayMin: 60, note: nil)
     }
 
@@ -71,5 +73,67 @@ final class ItineraryFeasibilityTests: XCTestCase {
         let d1 = [stop("d", "09:00")]
         let (plan, _) = ItineraryFeasibility.check([d0, d1], days: 2, maxSightsPerDay: 2)
         XCTAssertEqual(ids(plan), [["a", "f", "b"], ["d"]])
+    }
+
+    // MARK: - v2：D2 当日窗 / D3 spill 报告 / D8 软断言
+
+    func testMondayClosedStopDroppedWithWeekday() {
+        // D2：周一（weekday=1）到达「周一闭馆」的点 → 当日窗为空，硬违规丢弃；周二则保留。
+        let museum = stop("museum", "10:00", openHours: "09:00-17:00，周一闭馆")
+        let (mondayPlan, mondayReport) = ItineraryFeasibility.check(
+            [[stop("a", "09:00"), museum]], days: 1, maxSightsPerDay: 4, weekdays: [1])
+        XCTAssertEqual(ids(mondayPlan), [["a"]])
+        XCTAssertFalse(mondayReport.isFeasible)
+
+        let (tuesdayPlan, tuesdayReport) = ItineraryFeasibility.check(
+            [[stop("a", "09:00"), museum]], days: 1, maxSightsPerDay: 4, weekdays: [2])
+        XCTAssertEqual(ids(tuesdayPlan), [["a", "museum"]])
+        XCTAssertTrue(tuesdayReport.isFeasible)
+    }
+
+    func testNoWeekdayDegradesToBaseWindow() {
+        // 无日期 → 周闭馆不生效（与 v1 行为一致），base 窗内即可行。
+        let museum = stop("museum", "10:00", openHours: "09:00-17:00，周一闭馆")
+        let (plan, report) = ItineraryFeasibility.check([[museum]], days: 1, maxSightsPerDay: 4)
+        XCTAssertEqual(ids(plan), [["museum"]])
+        XCTAssertTrue(report.isFeasible)
+    }
+
+    func testDroppedSpillRecordedAsWarningNotViolation() {
+        // D3：最终丢弃清单 → softWarnings（附原因），不影响 isFeasible。
+        let dropped = [SpilledStop(candidate: POICandidate(id: "x", name: "x", kind: .sight,
+                                                           subtype: "", lat: 0, lng: 0),
+                                   reason: "当日闭馆")]
+        let (_, report) = ItineraryFeasibility.check([[stop("a", "09:00")]], days: 1,
+                                                     maxSightsPerDay: 4, dropped: dropped)
+        XCTAssertTrue(report.isFeasible)
+        XCTAssertEqual(report.softWarnings, ["最终丢弃 x（当日闭馆）"])
+    }
+
+    func testUnconvergedRouterRecordedAsInfo() {
+        // D8(a)：2-opt 触顶未收敛 → info，不影响可行性。
+        let (_, report) = ItineraryFeasibility.check([[stop("a", "09:00")]], days: 1,
+                                                     maxSightsPerDay: 4, routerConverged: [false])
+        XCTAssertTrue(report.isFeasible)
+        XCTAssertEqual(report.infos, ["day 0: 2-opt 达步数上限退出（未完全收敛）"])
+    }
+
+    func testSharpTurnDetectedAsInfo() {
+        // D8(b)：a→b→c 原路折返（夹角 ≈0° < 30°）→ info；不影响可行性。
+        let day = [stop("a", "09:00", lat: 0, lng: 0),
+                   stop("b", "10:30", lat: 0, lng: 0.02),
+                   stop("c", "12:00", lat: 0, lng: 0.0005)]
+        let (_, report) = ItineraryFeasibility.check([day], days: 1, maxSightsPerDay: 4)
+        XCTAssertTrue(report.isFeasible)
+        XCTAssertEqual(report.infos, ["day 0: 检出 1 处 <30° 急回折"])
+    }
+
+    func testStraightPathHasNoSharpTurnInfo() {
+        // 直线推进（夹角 ≈180°）→ 无急回折 info。
+        let day = [stop("a", "09:00", lat: 0, lng: 0),
+                   stop("b", "10:30", lat: 0, lng: 0.01),
+                   stop("c", "12:00", lat: 0, lng: 0.02)]
+        let (_, report) = ItineraryFeasibility.check([day], days: 1, maxSightsPerDay: 4)
+        XCTAssertTrue(report.infos.isEmpty)
     }
 }
