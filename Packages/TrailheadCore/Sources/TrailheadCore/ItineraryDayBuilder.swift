@@ -33,7 +33,7 @@ public enum ItineraryDayBuilder {
             let withMeals = MealSlotter.insertMeals(sights: routed, foodPool: food, usedIds: usedFood)
             for stop in withMeals where stop.kind == .food { usedFood.insert(stop.id) }
             // 5. 前向模拟赋 time/stayMin + 营业窗过滤（city 未入签名，估时按驾车/步行）。
-            let scheduled = ScheduleSimulator.simulate(stops: withMeals, pace: pace, city: "")
+            let scheduled = ScheduleSimulator.simulate(stops: withMeals, pace: pace, city: "").scheduled
             // 6. 装配 PlannedStop（Int 分钟 → "HH:mm"）；note 留空（P7 未做本期）。
             result.append(scheduled.map {
                 PlannedStop(candidate: $0.candidate, time: clock($0.arrival),
