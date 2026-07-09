@@ -65,10 +65,13 @@ public struct POICandidate: Identifiable, Hashable, Sendable {
     public var rating: Double?
     public var openHours: String?
     public var avgPrice: Int?
+    public var tags: [String]       // 特色标签：餐厅常为推荐菜、酒店为环境/服务（business.tag/rectag）
+    public var photos: [String]     // 图片 URL（show_fields=photos）
 
     public init(id: String, name: String, kind: ItemKind, subtype: String,
                 lat: Double, lng: Double, rating: Double? = nil,
-                openHours: String? = nil, avgPrice: Int? = nil) {
+                openHours: String? = nil, avgPrice: Int? = nil,
+                tags: [String] = [], photos: [String] = []) {
         self.id = id
         self.name = name
         self.kind = kind
@@ -78,6 +81,8 @@ public struct POICandidate: Identifiable, Hashable, Sendable {
         self.rating = rating
         self.openHours = openHours
         self.avgPrice = avgPrice
+        self.tags = tags
+        self.photos = photos
     }
 }
 

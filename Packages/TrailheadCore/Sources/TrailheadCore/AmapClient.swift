@@ -157,7 +157,7 @@ public struct AmapClient: POIDataSource {
     /// 按兴趣 tag 召回候选（去重）。改用「关键词搜索」而非类目码：
     /// types 查询默认序把冷门点排前、招牌景点常漏召；keywords 查询按热度/相关性返回，
     /// 能稳定捞到高点评地标（PDR §12.1 修订）。每词翻 `pagesPerCategory` 页扩大候选池，
-    /// 某页不足一页即停。show_fields=business 拿评分/营业。
+    /// 某页不足一页即停。show_fields=business,photos 拿评分/营业/特色标签/图片。
     public func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate] {
         let terms = tags.isEmpty ? ["景点"] : Set(tags.map(AmapCategory.searchTerm)).sorted()
         var seen = Set<String>()
@@ -166,7 +166,7 @@ public struct AmapClient: POIDataSource {
             for page in 1...pagesPerCategory {
                 let json = try await get("/v5/place/text", [
                     "keywords": term, "region": adcode, "city_limit": "true",
-                    "show_fields": "business", "page_size": "\(Self.pageSize)", "page_num": "\(page)",
+                    "show_fields": "business,photos", "page_size": "\(Self.pageSize)", "page_num": "\(page)",
                 ])
                 let pois = json["pois"] as? [[String: Any]] ?? []
                 for poi in pois {
@@ -183,7 +183,7 @@ public struct AmapClient: POIDataSource {
     public func searchPOI(keywords: String, adcode: String) async throws -> [POICandidate] {
         let json = try await get("/v5/place/text", [
             "keywords": keywords, "region": adcode, "city_limit": "true",
-            "show_fields": "business", "page_size": "\(Self.pageSize)",
+            "show_fields": "business,photos", "page_size": "\(Self.pageSize)",
         ])
         var seen = Set<String>()
         var out: [POICandidate] = []
@@ -280,8 +280,20 @@ public struct AmapClient: POIDataSource {
             lat: loc.1, lng: loc.0,
             rating: double(business?["rating"]),
             openHours: business?["opentime2"] as? String ?? business?["opentime"] as? String,
-            avgPrice: int(business?["cost"])
+            avgPrice: int(business?["cost"]),
+            tags: parseTags(business),
+            photos: (poi["photos"] as? [[String: Any]])?.compactMap { $0["url"] as? String } ?? []
         )
+    }
+
+    /// business.tag（餐厅常为推荐菜、酒店为环境/服务）+ rectag（人气标签），
+    /// 按中英文逗号/顿号/分号切分，去空白去重，保持原序。
+    static func parseTags(_ business: [String: Any]?) -> [String] {
+        let raw = [business?["tag"] as? String, business?["rectag"] as? String].compactMap { $0 }
+        var seen = Set<String>()
+        return raw.flatMap { $0.split(whereSeparator: { ",，、;；".contains($0) }) }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     /// "lng,lat" → (lng, lat)。

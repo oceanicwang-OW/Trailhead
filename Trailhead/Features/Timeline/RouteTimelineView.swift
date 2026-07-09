@@ -14,6 +14,7 @@ struct RouteTimelineView: View {
     var gutter: CGFloat = Metric.gutter
     var showDayTabs: Bool = true
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.openURL) var openURL   // OptionListRows 扩展（另文件）也要用
     @State private var isEditing = false
     @State private var draftPOIIDs: [UUID] = []
     @State private var editError: String?
@@ -145,105 +146,6 @@ struct RouteTimelineView: View {
         .disabled(isEditing || deletingItemID != nil || applyingReplacementItemID != nil || regeneratingDayID != nil)
         .help("重生成当天")
         .accessibilityLabel("重生成当天")
-    }
-
-    /// 当天「附近美食推荐」（按就近 + 评分，不排进动线，供用户自选）。
-    @ViewBuilder
-    private func foodSection(for day: DayPlan) -> some View {
-        let options = day.foodOptions
-        if !options.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("附近美食推荐")
-                    .font(Typo.display(15, .semibold))
-                    .foregroundStyle(Palette.textPrimary)
-                    .padding(.horizontal, 18)
-                ForEach(options) { foodRow($0) }
-            }
-            .padding(.top, 20)
-        }
-    }
-
-    private func foodRow(_ opt: FoodOption) -> some View {
-        let selected = mapFocus?.id == opt.id
-        return HStack(spacing: 10) {
-            Image(systemName: "fork.knife")
-                .font(.system(size: 13))
-                .foregroundStyle(ItemKind.food.color)
-                .frame(width: 30, height: 30)
-                .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(opt.name)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Palette.textPrimary)
-                HStack(spacing: 8) {
-                    if let r = opt.rating { Text("评分 \(String(format: "%.1f", r))") }
-                    if !opt.subtype.isEmpty { Text(opt.subtype) }
-                    if let p = opt.avgPrice, p > 0 { Text("¥\(p)/人") }
-                }
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.textSecondary)
-            }
-            Spacer()
-            Image(systemName: "mappin.circle").font(.system(size: 15)).foregroundStyle(Palette.textMuted)
-        }
-        .padding(10)
-        .background(Palette.fieldBG.opacity(selected ? 0.9 : 0.5), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10)
-            .stroke(selected ? ItemKind.food.color : .clear, lineWidth: 1.5))
-        .contentShape(Rectangle())
-        .onTapGesture {
-            mapFocus = MapFocus(id: opt.id, name: opt.name, lat: opt.lat, lng: opt.lng, kind: .food)
-        }
-        .padding(.horizontal, 18)
-    }
-
-    /// 住宿推荐清单（不排进每日动线，整趟共享，供用户自选）。
-    @ViewBuilder
-    private var lodgingSection: some View {
-        let options = trip.lodgingOptions
-        if !options.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("住宿推荐（自选）")
-                    .font(Typo.display(15, .semibold))
-                    .foregroundStyle(Palette.textPrimary)
-                    .padding(.horizontal, 18)
-                ForEach(options) { lodgingRow($0) }
-            }
-            .padding(.top, 20)
-        }
-    }
-
-    private func lodgingRow(_ opt: LodgingOption) -> some View {
-        let selected = mapFocus?.id == opt.id
-        return HStack(spacing: 10) {
-            Image(systemName: "bed.double.fill")
-                .font(.system(size: 13))
-                .foregroundStyle(Palette.green)
-                .frame(width: 30, height: 30)
-                .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(opt.name)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Palette.textPrimary)
-                HStack(spacing: 8) {
-                    if let r = opt.rating { Text("评分 \(String(format: "%.1f", r))") }
-                    if let p = opt.avgPrice { Text("¥\(p)/晚") }
-                }
-                .font(.system(size: 12))
-                .foregroundStyle(Palette.textSecondary)
-            }
-            Spacer()
-            Image(systemName: "mappin.circle").font(.system(size: 15)).foregroundStyle(Palette.textMuted)
-        }
-        .padding(10)
-        .background(Palette.fieldBG.opacity(selected ? 0.9 : 0.5), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10)
-            .stroke(selected ? ItemKind.lodging.color : .clear, lineWidth: 1.5))
-        .contentShape(Rectangle())
-        .onTapGesture {
-            mapFocus = MapFocus(id: opt.id, name: opt.name, lat: opt.lat, lng: opt.lng, kind: .lodging)
-        }
-        .padding(.horizontal, 18)
     }
 
     private func timeline(for day: DayPlan) -> some View {

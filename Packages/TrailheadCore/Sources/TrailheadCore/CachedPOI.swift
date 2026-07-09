@@ -21,12 +21,14 @@ public final class CachedPOI {
     public var rating: Double?
     public var openHours: String?
     public var avgPrice: Int?
+    public var tagsRaw: String = ""    // "\n" 连接（带默认值 → 轻量迁移安全，同 DayPlan.theme 先例）
+    public var photosRaw: String = ""  // "\n" 连接的图片 URL
     public var cachedAt: Date
 
     public init(poiId: String, adcode: String, category: String, name: String,
                 kind: ItemKind, subtype: String, lat: Double, lng: Double,
                 rating: Double? = nil, openHours: String? = nil, avgPrice: Int? = nil,
-                cachedAt: Date = .now) {
+                tags: [String] = [], photos: [String] = [], cachedAt: Date = .now) {
         self.key = Self.makeKey(adcode: adcode, category: category, poiId: poiId)
         self.poiId = poiId
         self.adcode = adcode
@@ -39,10 +41,14 @@ public final class CachedPOI {
         self.rating = rating
         self.openHours = openHours
         self.avgPrice = avgPrice
+        self.tagsRaw = tags.joined(separator: "\n")
+        self.photosRaw = photos.joined(separator: "\n")
         self.cachedAt = cachedAt
     }
 
     public var kind: ItemKind { ItemKind(rawValue: kindRaw) ?? .sight }
+    public var tags: [String] { tagsRaw.isEmpty ? [] : tagsRaw.components(separatedBy: "\n") }
+    public var photos: [String] { photosRaw.isEmpty ? [] : photosRaw.components(separatedBy: "\n") }
 
     public static func makeKey(adcode: String, category: String, poiId: String) -> String {
         "\(adcode)|\(category)|\(poiId)"
@@ -60,11 +66,13 @@ extension CachedPOI {
     public convenience init(candidate c: POICandidate, adcode: String, category: String, cachedAt: Date = .now) {
         self.init(poiId: c.id, adcode: adcode, category: category, name: c.name,
                   kind: c.kind, subtype: c.subtype, lat: c.lat, lng: c.lng,
-                  rating: c.rating, openHours: c.openHours, avgPrice: c.avgPrice, cachedAt: cachedAt)
+                  rating: c.rating, openHours: c.openHours, avgPrice: c.avgPrice,
+                  tags: c.tags, photos: c.photos, cachedAt: cachedAt)
     }
 
     public var candidate: POICandidate {
         POICandidate(id: poiId, name: name, kind: kind, subtype: subtype,
-                     lat: lat, lng: lng, rating: rating, openHours: openHours, avgPrice: avgPrice)
+                     lat: lat, lng: lng, rating: rating, openHours: openHours, avgPrice: avgPrice,
+                     tags: tags, photos: photos)
     }
 }

@@ -76,6 +76,18 @@ final class CachedPOITests: XCTestCase {
         XCTAssertEqual(try cache.fetch(adcode: "110100", category: "美食", now: now)?.map(\.id), ["NEW"])
     }
 
+    func testRoundtripPreservesTagsAndPhotos() throws {
+        let cache = POICache(context: try TestSupport.makeContext())
+        let rich = POICandidate(id: "R1", name: "老店", kind: .food, subtype: "粤菜",
+                                lat: 23.1, lng: 113.3, rating: 4.6,
+                                tags: ["白切鸡", "烧鹅"], photos: ["https://x/1.jpg", "https://x/2.jpg"])
+        try cache.store([rich], adcode: "440100", category: "美食")
+
+        let hit = try XCTUnwrap(try cache.fetch(adcode: "440100", category: "美食")?.first)
+        XCTAssertEqual(hit.tags, ["白切鸡", "烧鹅"])           // 缓存命中不丢标签/图片
+        XCTAssertEqual(hit.photos, ["https://x/1.jpg", "https://x/2.jpg"])
+    }
+
     func testClearAllEmptiesCache() throws {
         let cache = POICache(context: try TestSupport.makeContext())
         try cache.store([TestSupport.candidate("A1"), TestSupport.candidate("A2")],
