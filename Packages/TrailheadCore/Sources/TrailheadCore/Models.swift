@@ -95,11 +95,33 @@ public struct FoodOption: Codable, Hashable, Sendable, Identifiable {
     public var subtype: String     // 菜系/类型，如「海鲜」「火锅」
     public var lat: Double
     public var lng: Double
+    public var tags: [String]      // 推荐菜/特色标签（高德 business.tag/rectag）
+    public var photos: [String]    // 图片 URL
+    public var openHours: String?
 
     public init(id: String, name: String, rating: Double? = nil, avgPrice: Int? = nil,
-                subtype: String = "", lat: Double, lng: Double) {
+                subtype: String = "", lat: Double, lng: Double,
+                tags: [String] = [], photos: [String] = [], openHours: String? = nil) {
         self.id = id; self.name = name; self.rating = rating
         self.avgPrice = avgPrice; self.subtype = subtype; self.lat = lat; self.lng = lng
+        self.tags = tags; self.photos = photos; self.openHours = openHours
+    }
+
+    enum CodingKeys: String, CodingKey { case id, name, rating, avgPrice, subtype, lat, lng, tags, photos, openHours }
+
+    /// 容错解码：老数据没有新字段，缺失取默认，不丢整份清单（同 TripPrefs 先例）。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        rating = try c.decodeIfPresent(Double.self, forKey: .rating)
+        avgPrice = try c.decodeIfPresent(Int.self, forKey: .avgPrice)
+        subtype = try c.decodeIfPresent(String.self, forKey: .subtype) ?? ""
+        lat = try c.decode(Double.self, forKey: .lat)
+        lng = try c.decode(Double.self, forKey: .lng)
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        photos = try c.decodeIfPresent([String].self, forKey: .photos) ?? []
+        openHours = try c.decodeIfPresent(String.self, forKey: .openHours)
     }
 }
 
@@ -113,11 +135,30 @@ public struct LodgingOption: Codable, Hashable, Sendable, Identifiable {
     public var avgPrice: Int?
     public var lat: Double
     public var lng: Double
+    public var tags: [String]      // 环境/服务标签，如「免费停车」「近地铁」
+    public var photos: [String]    // 图片 URL
 
     public init(id: String, name: String, rating: Double? = nil,
-                avgPrice: Int? = nil, lat: Double, lng: Double) {
+                avgPrice: Int? = nil, lat: Double, lng: Double,
+                tags: [String] = [], photos: [String] = []) {
         self.id = id; self.name = name; self.rating = rating
         self.avgPrice = avgPrice; self.lat = lat; self.lng = lng
+        self.tags = tags; self.photos = photos
+    }
+
+    enum CodingKeys: String, CodingKey { case id, name, rating, avgPrice, lat, lng, tags, photos }
+
+    /// 容错解码：老数据没有新字段，缺失取默认（同 TripPrefs 先例）。
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        rating = try c.decodeIfPresent(Double.self, forKey: .rating)
+        avgPrice = try c.decodeIfPresent(Int.self, forKey: .avgPrice)
+        lat = try c.decode(Double.self, forKey: .lat)
+        lng = try c.decode(Double.self, forKey: .lng)
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        photos = try c.decodeIfPresent([String].self, forKey: .photos) ?? []
     }
 }
 

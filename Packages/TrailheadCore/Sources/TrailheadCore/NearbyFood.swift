@@ -31,7 +31,8 @@ public enum NearbyFood {
         }
         return candidates.prefix(limit).map {
             FoodOption(id: $0.id, name: $0.name, rating: $0.rating, avgPrice: $0.avgPrice,
-                       subtype: $0.subtype, lat: $0.lat, lng: $0.lng)
+                       subtype: $0.subtype, lat: $0.lat, lng: $0.lng,
+                       tags: $0.tags, photos: $0.photos, openHours: $0.openHours)
         }
     }
 

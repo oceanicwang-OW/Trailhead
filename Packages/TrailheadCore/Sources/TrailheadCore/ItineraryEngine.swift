@@ -92,7 +92,8 @@ public final class ItineraryEngine: ObservableObject {
             .sorted { ($0.rating ?? 0) > ($1.rating ?? 0) }
             .prefix(limit)
             .map { LodgingOption(id: $0.id, name: $0.name, rating: $0.rating,
-                                 avgPrice: $0.avgPrice, lat: $0.lat, lng: $0.lng) }
+                                 avgPrice: $0.avgPrice, lat: $0.lat, lng: $0.lng,
+                                 tags: $0.tags, photos: $0.photos) }
     }
 
     // MARK: - 步骤

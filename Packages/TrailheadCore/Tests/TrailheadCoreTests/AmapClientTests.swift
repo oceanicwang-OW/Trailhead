@@ -39,7 +39,7 @@ final class AmapClientTests: XCTestCase {
     // T2.2 ---------------------------------------------------------------
 
     func testSearchPOIParsesBusiness() async throws {
-        MockURLProtocol.stub(#"{"status":"1","info":"OK","infocode":"10000","pois":[{"id":"B0FFG","name":"故宫博物院","location":"116.397,39.918","type":"风景名胜;公园广场;公园","typecode":"110000","business":{"rating":"4.8","opentime2":"08:30-17:00","cost":"60"}}]}"#)
+        MockURLProtocol.stub(#"{"status":"1","info":"OK","infocode":"10000","pois":[{"id":"B0FFG","name":"故宫博物院","location":"116.397,39.918","type":"风景名胜;公园广场;公园","typecode":"110000","business":{"rating":"4.8","opentime2":"08:30-17:00","cost":"60","tag":"角楼,珍宝馆","rectag":"亲子好去处"},"photos":[{"title":"","url":"http://store.is.autonavi.com/showpic/a.jpg"},{"url":"https://aos-comment.amap.com/b.jpg"}]}]}"#)
         let pois = try await makeClient().searchPOI(adcode: "110000", tags: ["历史古迹"])
 
         XCTAssertEqual(pois.count, 1)
@@ -53,10 +53,14 @@ final class AmapClientTests: XCTestCase {
         XCTAssertEqual(p.rating, 4.8)
         XCTAssertEqual(p.openHours, "08:30-17:00")
         XCTAssertEqual(p.avgPrice, 60)
+        XCTAssertEqual(p.tags, ["角楼", "珍宝馆", "亲子好去处"])   // tag + rectag 合并
+        XCTAssertEqual(p.photos, ["http://store.is.autonavi.com/showpic/a.jpg",
+                                  "https://aos-comment.amap.com/b.jpg"])
 
         XCTAssertEqual(MockURLProtocol.requests.first?.url?.path, "/v5/place/text")
         XCTAssertEqual(queryValue("keywords", in: MockURLProtocol.requests.first!), "景点")   // 历史古迹→景点 关键词
         XCTAssertEqual(queryValue("region", in: MockURLProtocol.requests.first!), "110000")
+        XCTAssertEqual(queryValue("show_fields", in: MockURLProtocol.requests.first!), "business,photos")
     }
 
     func testSearchPOIToleratesMissingBusiness() async throws {
@@ -68,6 +72,16 @@ final class AmapClientTests: XCTestCase {
         XCTAssertNil(p.rating)                    // 无 business 不阻塞
         XCTAssertNil(p.openHours)
         XCTAssertNil(p.avgPrice)
+        XCTAssertEqual(p.tags, [])                // 无 business/photos → 空数组不阻塞
+        XCTAssertEqual(p.photos, [])
+    }
+
+    func testParseTagsSplitsAndDedupes() {
+        // 中英文逗号/顿号/分号都切；tag 与 rectag 合并去重、去空白，保持原序。
+        let tags = AmapClient.parseTags(["tag": "白切鸡，烧鹅, 白切鸡、 虾饺 ;老火汤", "rectag": "烧鹅"])
+        XCTAssertEqual(tags, ["白切鸡", "烧鹅", "虾饺", "老火汤"])
+        XCTAssertEqual(AmapClient.parseTags(nil), [])
+        XCTAssertEqual(AmapClient.parseTags(["rating": "4.5"]), [])   // 无 tag 字段
     }
 
     func testSearchPOIMapsTagsAndDedupes() async throws {

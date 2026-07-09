@@ -33,6 +33,17 @@ final class NearbyFoodTests: XCTestCase {
         XCTAssertEqual(out.map(\.id), ["b", "a"])              // 无参照 → 全城按评分
     }
 
+    func testPickCarriesTagsPhotosAndOpenHours() {
+        let pool = [POICandidate(id: "f", name: "f", kind: .food, subtype: "闽菜",
+                                 lat: 0, lng: 0, rating: 4.7, openHours: "10:00-22:00",
+                                 tags: ["佛跳墙", "海蛎煎"], photos: ["https://x/1.jpg"])]
+        let out = NearbyFood.pick(pool, nearCoords: [], limit: 1)
+
+        XCTAssertEqual(out.first?.tags, ["佛跳墙", "海蛎煎"])   // 推荐菜带到清单
+        XCTAssertEqual(out.first?.photos, ["https://x/1.jpg"])
+        XCTAssertEqual(out.first?.openHours, "10:00-22:00")
+    }
+
     func testOnlyFoodKindConsidered() {
         let pool = [
             POICandidate(id: "sight", name: "x", kind: .sight, subtype: "", lat: 0, lng: 0, rating: 5.0),
