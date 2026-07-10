@@ -81,6 +81,9 @@ final class ItineraryEngineTests: XCTestCase {
         // 进度推进到完成
         XCTAssertEqual(engine.stage, .done)
         XCTAssertEqual(engine.progress, 1.0)
+        XCTAssertEqual(engine.diagnostics.recalledCandidates, 4)
+        XCTAssertEqual(engine.diagnostics.transitSegments, 3)
+        XCTAssertTrue(engine.diagnostics.warnings.isEmpty)
         // 城市 adcode 已串进路由（公交 city1/city2 用）
         XCTAssertEqual(source.lastRouteCity, "110100")
     }
@@ -152,6 +155,7 @@ final class ItineraryEngineTests: XCTestCase {
         XCTAssertEqual(trip.lodgingOptions.map(\.id), ["H1", "H2"]) // 按评分降序成清单
         XCTAssertEqual(trip.lodgingOptions.first?.rating, 4.8)
         XCTAssertEqual(trip.sortedDays[0].sortedItems.first?.plannedTime, "09:15")
+        XCTAssertTrue(engine.diagnostics.usedLodgingAnchor)
     }
 
     @MainActor

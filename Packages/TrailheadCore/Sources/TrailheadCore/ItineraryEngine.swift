@@ -9,6 +9,18 @@ import SwiftData
 import Combine
 #endif
 
+public struct GenerationDiagnostics: Equatable, Sendable {
+    public var recalledCandidates: Int = 0
+    public var curatedCandidates: Int = 0
+    public var provisionalStops: Int = 0
+    public var finalStops: Int = 0
+    public var transitSegments: Int = 0
+    public var usedLodgingAnchor = false
+    public var warnings: [String] = []
+
+    public init() {}
+}
+
 @MainActor
 public final class ItineraryEngine: ObservableObject {
     public enum Stage: String, Sendable { case analyzing, routing, dining, transit, budgeting, done }
@@ -16,6 +28,7 @@ public final class ItineraryEngine: ObservableObject {
 
     @Published public private(set) var stage: Stage = .analyzing
     @Published public private(set) var progress: Double = 0
+    @Published public private(set) var diagnostics = GenerationDiagnostics()
 
     private let source: POIDataSource
     private let llm: LLMProvider
@@ -36,6 +49,7 @@ public final class ItineraryEngine: ObservableObject {
     @discardableResult
     public func generate(destination: String, prefs: TripPrefs,
                          days: Int, startDate: Date = .now) async throws -> Trip {
+        diagnostics = GenerationDiagnostics()
         set(.analyzing, 0.1)
         let (adcode, _) = try await source.geocodeCity(destination)
 
@@ -43,6 +57,7 @@ public final class ItineraryEngine: ObservableObject {
         let categories = AmapCategory.recallCategories(for: prefs)
         let candidates = try await recall.recall(adcode: adcode, tags: categories, freeText: prefs.freeText)
         guard !candidates.isEmpty else { throw EngineError.noCandidates }
+        diagnostics.recalledCandidates = candidates.count
         set(.routing, 0.4)
 
         // 住宿拆成单独清单（不排进每日动线）；行程编排只用非住宿候选。
@@ -56,17 +71,25 @@ public final class ItineraryEngine: ObservableObject {
                                                            tags: prefs.tags, cuisines: prefs.cuisines,
                                                            budgetPerDay: prefs.budgetPerDay, pinned: pinned)
         guard !itineraryCandidates.isEmpty else { throw EngineError.noCandidates }
+        diagnostics.curatedCandidates = itineraryCandidates.count
+        diagnostics.usedLodgingAnchor = baseAnchor != nil
 
         // startDate 使 D2 周闭馆逐日生效（天序号 → weekday 由 planStops 推导）。
         let perDay = try await ItineraryDayBuilder.planStops(prefs: prefs, candidates: itineraryCandidates,
                                                              days: days, llm: llm, startDate: startDate,
                                                              city: adcode, baseAnchor: baseAnchor)
+        diagnostics.provisionalStops = perDay.reduce(0) { $0 + $1.count }
 
         let routedSource = RouteMemoizingPOISource(base: source)
         let reconciled = await ItineraryDayBuilder.reconcileWithRoutes(
             stops: perDay, prefs: prefs, source: routedSource,
             city: adcode, startDate: startDate, baseAnchor: baseAnchor
         )
+        diagnostics.finalStops = reconciled.reduce(0) { $0 + $1.count }
+        let droppedByRealRoutes = diagnostics.provisionalStops - diagnostics.finalStops
+        if droppedByRealRoutes > 0 {
+            diagnostics.warnings.append("真实路线校准后移除 \(droppedByRealRoutes) 个不可行停留")
+        }
 
         set(.dining, 0.6)
         guard reconciled.contains(where: { !$0.isEmpty }) else { throw EngineError.emptyPlan }
@@ -80,6 +103,9 @@ public final class ItineraryEngine: ObservableObject {
                                        destination: destination, adcode: adcode,
                                        startDate: startDate, foodPool: foodPool,
                                        routeSource: routedSource)
+        diagnostics.transitSegments = dayPlans.reduce(0) {
+            $0 + $1.items.filter { $0.kind == .transit }.count
+        }
 
         set(.budgeting, 0.95)
         let trip = try repository.create(

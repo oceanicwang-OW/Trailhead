@@ -41,10 +41,14 @@ public enum ItineraryDayBuilder {
         let weekdays: [Int?] = (0..<max(days, 1)).map { weekday(of: startDate, dayOffset: $0) }
 
         // 2. 聚类分天（days==1 单日重生成跳过分天，全部候选进当天）。
-        let dayClusters: [[POICandidate]] = days <= 1
+        let initialClusters: [[POICandidate]] = days <= 1
             ? [sights]
             : DayClusterer.cluster(sights: sights, days: days, maxSightsPerDay: maxPerDay,
                                    scores: scores, stayMinutes: stays, stayBudget: stayBudget)
+        let dayClusters = days <= 1 ? initialClusters : GlobalItineraryOptimizer.optimize(
+            clusters: initialClusters, prefs: prefs, weekdays: weekdays, city: city,
+            baseAnchor: baseAnchor, maxSightsPerDay: maxPerDay
+        )
 
         var usedFood: Set<String> = []
         var previousExit: (lat: Double, lng: Double)?
