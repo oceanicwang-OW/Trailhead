@@ -10,6 +10,7 @@ import XCTest
 private final class CrossWaterSpySource: POIDataSource {
     var walkMeters = 6000            // 步行路网距离（>3× 直线即触发回填）
     var walkFails = false
+    var nonWalkMinutes = 12
     private(set) var requestedModes: [TransitMode] = []
 
     func geocodeCity(_ name: String) async throws -> (adcode: String, center: (Double, Double)) {
@@ -23,7 +24,7 @@ private final class CrossWaterSpySource: POIDataSource {
             if walkFails { throw URLError(.badServerResponse) }
             return (75, walkMeters, nil)
         }
-        return (12, 3200, 8)
+        return (nonWalkMinutes, 3200, 8)
     }
 }
 
@@ -229,5 +230,48 @@ final class OrchestrationPipelineTests: XCTestCase {
         let times = perDay[0].compactMap { minutes($0.time) }
         XCTAssertEqual(times, times.sorted())
         XCTAssertEqual(perDay[0].first?.time, "09:00")                       // 首点从 dayStart 起
+    }
+
+    func testPlannerUsesCityTransitEstimate() async throws {
+        let stops = [sight("west", 0, 0), sight("east", 0, 0.03)]
+
+        let driving = try await ItineraryDayBuilder.planStops(
+            prefs: TripPrefs(pace: .relaxed), candidates: stops, days: 1,
+            llm: StubLLMProvider())
+        let transit = try await ItineraryDayBuilder.planStops(
+            prefs: TripPrefs(pace: .relaxed), candidates: stops, days: 1,
+            llm: StubLLMProvider(), city: "110100")
+
+        XCTAssertEqual(driving[0].last?.time, "10:39")
+        XCTAssertEqual(transit[0].last?.time, "10:46")
+    }
+
+    func testRealRouteReconciliationRemovesInfeasibleStop() async throws {
+        let candidates = [sight("west", 0, 0), sight("east", 0, 0.03)]
+        let provisional = try await ItineraryDayBuilder.planStops(
+            prefs: TripPrefs(pace: .relaxed), candidates: candidates, days: 1,
+            llm: StubLLMProvider(), city: "110100")
+        let source = CrossWaterSpySource()
+        source.nonWalkMinutes = 600
+        let cached = RouteMemoizingPOISource(base: source)
+
+        let reconciled = await ItineraryDayBuilder.reconcileWithRoutes(
+            stops: provisional, prefs: TripPrefs(pace: .relaxed),
+            source: cached, city: "110100"
+        )
+
+        XCTAssertEqual(reconciled[0].count, 1)
+    }
+
+    func testRouteMemoizerReusesSameSegment() async throws {
+        let source = CrossWaterSpySource()
+        let cached = RouteMemoizingPOISource(base: source)
+        let a = sight("a", 0, 0)
+        let b = sight("b", 0, 0.03)
+
+        _ = try await cached.route(from: a, to: b, mode: .metro, city: "110100")
+        _ = try await cached.route(from: a, to: b, mode: .metro, city: "110100")
+
+        XCTAssertEqual(source.requestedModes, [.metro])
     }
 }

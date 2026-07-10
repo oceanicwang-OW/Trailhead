@@ -9,6 +9,18 @@ import SwiftData
 import Combine
 #endif
 
+public struct GenerationDiagnostics: Equatable, Sendable {
+    public var recalledCandidates: Int = 0
+    public var curatedCandidates: Int = 0
+    public var provisionalStops: Int = 0
+    public var finalStops: Int = 0
+    public var transitSegments: Int = 0
+    public var usedLodgingAnchor = false
+    public var warnings: [String] = []
+
+    public init() {}
+}
+
 @MainActor
 public final class ItineraryEngine: ObservableObject {
     public enum Stage: String, Sendable { case analyzing, routing, dining, transit, budgeting, done }
@@ -16,6 +28,7 @@ public final class ItineraryEngine: ObservableObject {
 
     @Published public private(set) var stage: Stage = .analyzing
     @Published public private(set) var progress: Double = 0
+    @Published public private(set) var diagnostics = GenerationDiagnostics()
 
     private let source: POIDataSource
     private let llm: LLMProvider
@@ -36,6 +49,7 @@ public final class ItineraryEngine: ObservableObject {
     @discardableResult
     public func generate(destination: String, prefs: TripPrefs,
                          days: Int, startDate: Date = .now) async throws -> Trip {
+        diagnostics = GenerationDiagnostics()
         set(.analyzing, 0.1)
         let (adcode, _) = try await source.geocodeCity(destination)
 
@@ -43,31 +57,55 @@ public final class ItineraryEngine: ObservableObject {
         let categories = AmapCategory.recallCategories(for: prefs)
         let candidates = try await recall.recall(adcode: adcode, tags: categories, freeText: prefs.freeText)
         guard !candidates.isEmpty else { throw EngineError.noCandidates }
+        diagnostics.recalledCandidates = candidates.count
         set(.routing, 0.4)
 
         // 住宿拆成单独清单（不排进每日动线）；行程编排只用非住宿候选。
-        let lodging = Self.lodgingShortlist(from: candidates)
+        let lodging = Self.lodgingShortlist(from: candidates, prefs: prefs)
+        let baseAnchor = lodging.first.flatMap { option in
+            candidates.first { $0.id == option.id }
+        }
         // 确定性规则：点评分 + 偏好加权筛出每类高分点；freeText 点名的点豁免必留。
         let pinned = Self.pinnedIDs(in: candidates, freeText: prefs.freeText)
         let itineraryCandidates = CandidateCuration.curate(candidates.filter { $0.kind != .lodging },
-                                                           tags: prefs.tags, pinned: pinned)
+                                                           tags: prefs.tags, cuisines: prefs.cuisines,
+                                                           budgetPerDay: prefs.budgetPerDay, pinned: pinned)
         guard !itineraryCandidates.isEmpty else { throw EngineError.noCandidates }
+        diagnostics.curatedCandidates = itineraryCandidates.count
+        diagnostics.usedLodgingAnchor = baseAnchor != nil
 
         // startDate 使 D2 周闭馆逐日生效（天序号 → weekday 由 planStops 推导）。
         let perDay = try await ItineraryDayBuilder.planStops(prefs: prefs, candidates: itineraryCandidates,
-                                                             days: days, llm: llm, startDate: startDate)
+                                                             days: days, llm: llm, startDate: startDate,
+                                                             city: adcode, baseAnchor: baseAnchor)
+        diagnostics.provisionalStops = perDay.reduce(0) { $0 + $1.count }
+
+        let routedSource = RouteMemoizingPOISource(base: source)
+        let reconciled = await ItineraryDayBuilder.reconcileWithRoutes(
+            stops: perDay, prefs: prefs, source: routedSource,
+            city: adcode, startDate: startDate, baseAnchor: baseAnchor
+        )
+        diagnostics.finalStops = reconciled.reduce(0) { $0 + $1.count }
+        let droppedByRealRoutes = diagnostics.provisionalStops - diagnostics.finalStops
+        if droppedByRealRoutes > 0 {
+            diagnostics.warnings.append("真实路线校准后移除 \(droppedByRealRoutes) 个不可行停留")
+        }
 
         set(.dining, 0.6)
-        guard perDay.contains(where: { !$0.isEmpty }) else { throw EngineError.emptyPlan }
+        guard reconciled.contains(where: { !$0.isEmpty }) else { throw EngineError.emptyPlan }
 
         // 几何定稿后，LLM 只补文案（note + 每日主题）；失败自动降级留空，不阻断生成（P7.1）。
-        let annotated = await NoteWriter.annotate(stops: perDay, prefs: prefs, llm: llm)
+        let annotated = await NoteWriter.annotate(stops: reconciled, prefs: prefs, llm: llm)
 
         set(.transit, 0.8)
         let foodPool = candidates.filter { $0.kind == .food }
         let dayPlans = await buildDays(annotated.stops, themes: annotated.themes,
                                        destination: destination, adcode: adcode,
-                                       startDate: startDate, foodPool: foodPool)
+                                       startDate: startDate, foodPool: foodPool,
+                                       routeSource: routedSource)
+        diagnostics.transitSegments = dayPlans.reduce(0) {
+            $0 + $1.items.filter { $0.kind == .transit }.count
+        }
 
         set(.budgeting, 0.95)
         let trip = try repository.create(
@@ -86,26 +124,47 @@ public final class ItineraryEngine: ObservableObject {
     }
 
     /// 取评分最高的若干住宿作为候选清单（PDR：住宿不排进动线，单独成清单）。
-    static func lodgingShortlist(from candidates: [POICandidate], limit: Int = 6) -> [LodgingOption] {
+    static func lodgingShortlist(from candidates: [POICandidate], prefs: TripPrefs? = nil,
+                                 limit: Int = 6) -> [LodgingOption] {
         candidates
             .filter { $0.kind == .lodging }
-            .sorted { ($0.rating ?? 0) > ($1.rating ?? 0) }
+            .sorted {
+                let left = lodgingScore($0, prefs: prefs)
+                let right = lodgingScore($1, prefs: prefs)
+                return left == right ? $0.id < $1.id : left > right
+            }
             .prefix(limit)
             .map { LodgingOption(id: $0.id, name: $0.name, rating: $0.rating,
                                  avgPrice: $0.avgPrice, lat: $0.lat, lng: $0.lng,
                                  tags: $0.tags, photos: $0.photos) }
     }
 
+    private static func lodgingScore(_ candidate: POICandidate, prefs: TripPrefs?) -> Double {
+        var score = candidate.rating ?? CandidateCuration.neutralRating
+        guard let prefs else { return score }
+        if !prefs.lodgingType.isEmpty,
+           CandidateCuration.matchesAny(candidate, terms: [prefs.lodgingType]) {
+            score += 0.75
+        }
+        if let price = candidate.avgPrice {
+            let target = max(1, Double(prefs.budgetPerDay) * 0.5)
+            let ratio = Double(price) / target
+            score += ratio <= 1 ? 0.25 : -min(2, (ratio - 1) * 0.75)
+        }
+        return score
+    }
+
     // MARK: - 步骤
 
     /// 组装每天的 PlanItem，并在相邻 POI 间补交通段（PDR T3.5）。themes 与 perDay 天序对齐（P7）。
     private func buildDays(_ perDay: [[PlannedStop]], themes: [String?], destination: String,
-                           adcode: String, startDate: Date, foodPool: [POICandidate]) async -> [DayPlan] {
+                           adcode: String, startDate: Date, foodPool: [POICandidate],
+                           routeSource: POIDataSource) async -> [DayPlan] {
         let cal = Calendar.current
         var result: [DayPlan] = []
         for (index, stops) in perDay.enumerated() {
             let date = cal.date(byAdding: .day, value: index, to: startDate) ?? startDate
-            let items = await ItineraryDayBuilder.buildItems(from: stops, source: source, city: adcode)
+            let items = await ItineraryDayBuilder.buildItems(from: stops, source: routeSource, city: adcode)
             let day = DayPlan(dayIndex: index, date: date, cityLabel: destination, items: items)
             day.theme = (themes.indices.contains(index) ? themes[index] : nil) ?? ""
             day.foodOptions = Self.nearbyFood(forItems: items, foodPool: foodPool)

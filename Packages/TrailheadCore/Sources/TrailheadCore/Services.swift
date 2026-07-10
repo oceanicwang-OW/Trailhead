@@ -105,6 +105,52 @@ public extension POIDataSource {
     }
 }
 
+/// 单次生成过程内复用相同有向路段，避免“真实时间校准”和交通卡片装配重复请求数据源。
+actor RouteMemoizingPOISource: POIDataSource {
+    private struct Key: Hashable {
+        let fromID: String
+        let toID: String
+        let modeRaw: String
+        let city: String
+    }
+
+    private struct Value {
+        let minutes: Int
+        let meters: Int
+        let cost: Int?
+    }
+
+    private let base: POIDataSource
+    private var routes: [Key: Value] = [:]
+
+    init(base: POIDataSource) {
+        self.base = base
+    }
+
+    func geocodeCity(_ name: String) async throws -> (adcode: String, center: (Double, Double)) {
+        try await base.geocodeCity(name)
+    }
+
+    func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate] {
+        try await base.searchPOI(adcode: adcode, tags: tags)
+    }
+
+    func searchPOI(keywords: String, adcode: String) async throws -> [POICandidate] {
+        try await base.searchPOI(keywords: keywords, adcode: adcode)
+    }
+
+    func route(from: POICandidate, to: POICandidate,
+               mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?) {
+        let key = Key(fromID: from.id, toID: to.id, modeRaw: mode.rawValue, city: city)
+        if let cached = routes[key] {
+            return (cached.minutes, cached.meters, cached.cost)
+        }
+        let fresh = try await base.route(from: from, to: to, mode: mode, city: city)
+        routes[key] = Value(minutes: fresh.minutes, meters: fresh.meters, cost: fresh.cost)
+        return fresh
+    }
+}
+
 /// Stub used until AmapClient lands (PDR T2.1–T2.5).
 public struct StubPOISource: POIDataSource {
     public init() {}

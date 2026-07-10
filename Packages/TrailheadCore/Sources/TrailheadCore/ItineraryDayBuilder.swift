@@ -17,7 +17,9 @@ public enum ItineraryDayBuilder {
     /// 排除集（D9）由调用方在 candidates 里预先过滤（见 TripRepository.regenerateDay）。
     public static func planStops(prefs: TripPrefs, candidates: [POICandidate],
                                  days: Int, llm: LLMProvider,
-                                 startDate: Date? = nil) async throws -> [[PlannedStop]] {
+                                 startDate: Date? = nil,
+                                 city: String = "",
+                                 baseAnchor: POICandidate? = nil) async throws -> [[PlannedStop]] {
         _ = llm  // 几何步骤不使用 LLM（保持 100% 确定性）；文案由上层 NoteWriter 叠加（P7.1），参数保留维持对外契约（C3）。
 
         // 1. 按 kind 拆分：sights（含 other，即非食非住）/ food。住宿已在调用前剔除。
@@ -27,7 +29,10 @@ public enum ItineraryDayBuilder {
         let maxPerDay = DayClusterer.maxSights(for: pace)
 
         // 综合分 + 停留先验的统一映射：D3 牺牲、D6 播种、D7 预算共用同一真源。
-        let scores = Dictionary(candidates.map { ($0.id, CandidateCuration.score($0, tags: prefs.tags)) },
+        let scores = Dictionary(candidates.map {
+            ($0.id, CandidateCuration.score($0, tags: prefs.tags, cuisines: prefs.cuisines,
+                                            budgetPerDay: prefs.budgetPerDay))
+        },
                                 uniquingKeysWith: { a, _ in a })
         let stays = Dictionary(candidates.map { ($0.id, StayDuration.duration(for: $0, pace: pace)) },
                                uniquingKeysWith: { a, _ in a })
@@ -36,10 +41,14 @@ public enum ItineraryDayBuilder {
         let weekdays: [Int?] = (0..<max(days, 1)).map { weekday(of: startDate, dayOffset: $0) }
 
         // 2. 聚类分天（days==1 单日重生成跳过分天，全部候选进当天）。
-        let dayClusters: [[POICandidate]] = days <= 1
+        let initialClusters: [[POICandidate]] = days <= 1
             ? [sights]
             : DayClusterer.cluster(sights: sights, days: days, maxSightsPerDay: maxPerDay,
                                    scores: scores, stayMinutes: stays, stayBudget: stayBudget)
+        let dayClusters = days <= 1 ? initialClusters : GlobalItineraryOptimizer.optimize(
+            clusters: initialClusters, prefs: prefs, weekdays: weekdays, city: city,
+            baseAnchor: baseAnchor, maxSightsPerDay: maxPerDay
+        )
 
         var usedFood: Set<String> = []
         var previousExit: (lat: Double, lng: Double)?
@@ -49,32 +58,45 @@ public enum ItineraryDayBuilder {
 
         for (dayIdx, cluster) in dayClusters.enumerated() {
             let wd = weekdays[min(dayIdx, weekdays.count - 1)]
+            let baseCoordinate = baseAnchor.map { (lat: $0.lat, lng: $0.lng) }
             // 3. 簇内排序（贪心NN + 2-opt；天间用上一天出口锚点衔接；收敛标志供 D8 软断言）。
-            let (routed, converged) = DayRouter.routeWithDiagnostics(cluster, entryAnchor: previousExit)
+            let (routed, converged) = DayRouter.routeWithDiagnostics(
+                cluster, entryAnchor: baseCoordinate ?? previousExit,
+                exitAnchor: baseCoordinate
+            )
             routerConverged.append(converged)
             // 4. 第一遍模拟（仅景点）→ 临时时刻线；丢点按分牺牲进 spill 池（D1/D3）。
-            let first = ScheduleSimulator.simulate(stops: routed, pace: pace, city: "", weekday: wd,
-                                                   dayStart: dayStart, dayEnd: dayEnd, scores: scores)
+            let first = ScheduleSimulator.simulate(stops: routed, pace: pace, city: city, weekday: wd,
+                                                   dayStart: dayStart, dayEnd: dayEnd, scores: scores,
+                                                   entryAnchor: baseAnchor, exitAnchor: baseAnchor)
             spillPool += first.spilled.map { (day: dayIdx, stop: $0) }
             // 5. 按临时时刻线插午/晚餐（餐窗中点定位 + 顺路绕行选店，跨天去重，D1）。
             let withMeals = MealSlotter.insertMeals(schedule: first.scheduled, foodPool: food,
-                                                    usedIds: usedFood)
-            for stop in withMeals where stop.kind == .food { usedFood.insert(stop.id) }
+                                                    usedIds: usedFood, cuisines: prefs.cuisines,
+                                                    budgetPerDay: prefs.budgetPerDay,
+                                                    weekday: wd)
             // 6. 第二遍模拟（景点+餐饮）→ 终版顺序；被挤掉的景点同样进 spill（餐饮软约束不重插）。
-            let second = ScheduleSimulator.simulate(stops: withMeals, pace: pace, city: "", weekday: wd,
-                                                    dayStart: dayStart, dayEnd: dayEnd, scores: scores)
+            let second = ScheduleSimulator.simulate(stops: withMeals, pace: pace, city: city, weekday: wd,
+                                                    dayStart: dayStart, dayEnd: dayEnd, scores: scores,
+                                                    entryAnchor: baseAnchor, exitAnchor: baseAnchor)
             spillPool += second.spilled.filter { $0.candidate.kind != .food }
                 .map { (day: dayIdx, stop: $0) }
+            for stop in second.scheduled where stop.candidate.kind == .food {
+                usedFood.insert(stop.candidate.id)
+            }
             dayOrders.append(second.scheduled.map(\.candidate))
-            previousExit = second.scheduled.last.map { (lat: $0.candidate.lat, lng: $0.candidate.lng) }
+            if baseAnchor == nil {
+                previousExit = second.scheduled.last.map { (lat: $0.candidate.lat, lng: $0.candidate.lng) }
+            }
         }
 
         // 7. SpillRepair：spill 按分数降序跨天重插；days==1 无处可去，直接进丢弃清单（D3）。
         var dropped: [SpilledStop] = []
         if days > 1, !spillPool.isEmpty {
-            let ctx = SpillRepair.Context(pace: pace, city: "", weekdays: weekdays,
+            let ctx = SpillRepair.Context(pace: pace, city: city, weekdays: weekdays,
                                           dayStart: dayStart, dayEnd: dayEnd, scores: scores,
-                                          maxSightsPerDay: maxPerDay, stayBudget: stayBudget)
+                                          baseAnchor: baseAnchor, maxSightsPerDay: maxPerDay,
+                                          stayBudget: stayBudget)
             (dayOrders, dropped) = SpillRepair.repair(dayOrders: dayOrders, spill: spillPool, context: ctx)
         } else {
             dropped = spillPool.map(\.stop)
@@ -85,8 +107,9 @@ public enum ItineraryDayBuilder {
         var result: [[PlannedStop]] = []
         for (dayIdx, order) in dayOrders.enumerated() {
             let wd = weekdays[min(dayIdx, weekdays.count - 1)]
-            let sim = ScheduleSimulator.simulate(stops: order, pace: pace, city: "", weekday: wd,
-                                                 dayStart: dayStart, dayEnd: dayEnd, scores: scores)
+            let sim = ScheduleSimulator.simulate(stops: order, pace: pace, city: city, weekday: wd,
+                                                 dayStart: dayStart, dayEnd: dayEnd, scores: scores,
+                                                 entryAnchor: baseAnchor, exitAnchor: baseAnchor)
             result.append(sim.scheduled.map {
                 PlannedStop(candidate: $0.candidate, time: clock($0.arrival),
                             stayMin: $0.stayMin, note: nil)
@@ -97,6 +120,128 @@ public enum ItineraryDayBuilder {
         return ItineraryFeasibility.check(result, days: days, maxSightsPerDay: maxPerDay,
                                           weekdays: weekdays, dropped: dropped,
                                           routerConverged: routerConverged).plan
+    }
+
+    /// 用最终候选边的真实高德交通耗时重放排程。真实耗时导致溢出时，景点会再次尝试跨天重插；
+    /// 新产生的相邻边在下一轮补取，直到顺序稳定或达到有限轮次。请求复用由 RouteMemoizingPOISource 承担。
+    public static func reconcileWithRoutes(stops: [[PlannedStop]], prefs: TripPrefs,
+                                           source: POIDataSource, city: String,
+                                           startDate: Date? = nil,
+                                           baseAnchor: POICandidate? = nil,
+                                           maxPasses: Int = 4) async -> [[PlannedStop]] {
+        guard !stops.isEmpty else { return [] }
+
+        var orders = stops.map { $0.map(\.candidate) }
+        var travelTimes: RouteTimeMatrix = [:]
+        let weekdays = stops.indices.map { weekday(of: startDate, dayOffset: $0) }
+        let maxPerDay = DayClusterer.maxSights(for: prefs.pace)
+        let stayBudget = Int(DayClusterer.defaultTimeBudgetRatio * Double(dayEnd - dayStart))
+        let scores = Dictionary(orders.flatMap { $0 }.map {
+            ($0.id, CandidateCuration.score($0, tags: prefs.tags, cuisines: prefs.cuisines,
+                                            budgetPerDay: prefs.budgetPerDay))
+        }, uniquingKeysWith: { a, _ in a })
+
+        for _ in 0..<max(1, maxPasses) {
+            travelTimes = await loadRouteTimes(for: orders, baseAnchor: baseAnchor,
+                                               source: source, city: city,
+                                               existing: travelTimes)
+            var nextOrders: [[POICandidate]] = []
+            var spill: [(day: Int, stop: SpilledStop)] = []
+            var scheduledByDay: [[ScheduledStop]] = []
+
+            for (dayIndex, order) in orders.enumerated() {
+                let simulation = ScheduleSimulator.simulate(
+                    stops: order, pace: prefs.pace, city: city,
+                    weekday: weekdays[dayIndex], dayStart: dayStart, dayEnd: dayEnd,
+                    scores: scores, travelTimes: travelTimes,
+                    entryAnchor: baseAnchor, exitAnchor: baseAnchor
+                )
+                scheduledByDay.append(simulation.scheduled)
+                nextOrders.append(simulation.scheduled.map(\.candidate))
+                spill += simulation.spilled.filter { $0.candidate.kind != .food }
+                    .map { (day: dayIndex, stop: $0) }
+            }
+
+            if orders.count > 1, !spill.isEmpty {
+                let context = SpillRepair.Context(
+                    pace: prefs.pace, city: city, weekdays: weekdays,
+                    dayStart: dayStart, dayEnd: dayEnd, scores: scores,
+                    travelTimes: travelTimes, baseAnchor: baseAnchor,
+                    maxSightsPerDay: maxPerDay,
+                    stayBudget: stayBudget
+                )
+                nextOrders = SpillRepair.repair(dayOrders: nextOrders, spill: spill, context: context).dayOrders
+            }
+
+            let stable = spill.isEmpty && orderIDs(nextOrders) == orderIDs(orders)
+            orders = nextOrders
+            if stable {
+                return scheduledByDay.map { day in
+                    day.map {
+                        PlannedStop(candidate: $0.candidate, time: clock($0.arrival),
+                                    stayMin: $0.stayMin, note: nil)
+                    }
+                }
+            }
+        }
+
+        travelTimes = await loadRouteTimes(for: orders, baseAnchor: baseAnchor,
+                                           source: source, city: city,
+                                           existing: travelTimes)
+        return orders.enumerated().map { dayIndex, order in
+            ScheduleSimulator.simulate(
+                stops: order, pace: prefs.pace, city: city,
+                weekday: weekdays[dayIndex], dayStart: dayStart, dayEnd: dayEnd,
+                scores: scores, travelTimes: travelTimes,
+                entryAnchor: baseAnchor, exitAnchor: baseAnchor
+            ).scheduled.map {
+                PlannedStop(candidate: $0.candidate, time: clock($0.arrival),
+                            stayMin: $0.stayMin, note: nil)
+            }
+        }
+    }
+
+    private static func loadRouteTimes(for orders: [[POICandidate]], baseAnchor: POICandidate?,
+                                       source: POIDataSource, city: String,
+                                       existing: RouteTimeMatrix) async -> RouteTimeMatrix {
+        var matrix = existing
+        for order in orders where order.count > 1 {
+            for index in 1..<order.count {
+                let from = order[index - 1]
+                let to = order[index]
+                let key = RouteTimeKey(fromID: from.id, toID: to.id)
+                guard matrix[key] == nil,
+                      let segment = await routedSegment(from: from, to: to, source: source, city: city) else {
+                    continue
+                }
+                matrix[key] = segment.minutes
+            }
+        }
+        if let baseAnchor {
+            for order in orders {
+                if let first = order.first {
+                    let key = RouteTimeKey(fromID: baseAnchor.id, toID: first.id)
+                    if matrix[key] == nil,
+                       let segment = await routedSegment(from: baseAnchor, to: first,
+                                                         source: source, city: city) {
+                        matrix[key] = segment.minutes
+                    }
+                }
+                if let last = order.last {
+                    let key = RouteTimeKey(fromID: last.id, toID: baseAnchor.id)
+                    if matrix[key] == nil,
+                       let segment = await routedSegment(from: last, to: baseAnchor,
+                                                         source: source, city: city) {
+                        matrix[key] = segment.minutes
+                    }
+                }
+            }
+        }
+        return matrix
+    }
+
+    private static func orderIDs(_ orders: [[POICandidate]]) -> [[String]] {
+        orders.map { $0.map(\.id) }
     }
 
     /// 天序号 → weekday（1=周一…7=周日）。无日期返回 nil（D2 退化 base 语义）。

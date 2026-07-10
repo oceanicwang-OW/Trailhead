@@ -142,27 +142,41 @@ public struct TripRepository {
         // 住宿单独成清单；行程候选走确定性筛选（点评分 + 偏好加权 + 点名豁免，与整趟生成同规则）。
         let pinned = ItineraryEngine.pinnedIDs(in: candidates, freeText: trip.prefs.freeText)
         let itineraryCandidates = CandidateCuration.curate(candidates.filter { $0.kind != .lodging },
-                                                           tags: trip.prefs.tags, pinned: pinned)
+                                                           tags: trip.prefs.tags,
+                                                           cuisines: trip.prefs.cuisines,
+                                                           budgetPerDay: trip.prefs.budgetPerDay,
+                                                           pinned: pinned)
         // D9 排除集：其余各天已排的全部 poi_id 预先滤掉，重生成的那天不得选中别天已有的点。
         let otherDayPOIs = Set(trip.days.filter { $0.id != day.id }
             .flatMap { $0.items.compactMap(\.poiId) })
         let available = itineraryCandidates.filter { !otherDayPOIs.contains($0.id) }
         guard !available.isEmpty else { throw ItineraryEngine.EngineError.noCandidates }
+        let baseAnchor = trip.lodgingOptions.first.flatMap { option in
+            candidates.first { $0.id == option.id }
+        }
 
         // day.date 使 D2 周闭馆按该天 weekday 生效。
         let perDay = try await ItineraryDayBuilder.planStops(prefs: trip.prefs,
                                                              candidates: available,
                                                              days: 1,
                                                              llm: llm,
-                                                             startDate: day.date)
-        guard let stops = perDay.first, !stops.isEmpty else {
+                                                             startDate: day.date,
+                                                             city: adcode,
+                                                             baseAnchor: baseAnchor)
+        let routedSource = RouteMemoizingPOISource(base: source)
+        let reconciled = await ItineraryDayBuilder.reconcileWithRoutes(
+            stops: perDay, prefs: trip.prefs, source: routedSource,
+            city: adcode, startDate: day.date, baseAnchor: baseAnchor
+        )
+        guard let stops = reconciled.first, !stops.isEmpty else {
             throw ItineraryEngine.EngineError.emptyPlan
         }
         // 几何定稿后补文案（note + 当天主题）；失败自动降级留空（P7.1）。
         let annotated = await NoteWriter.annotate(stops: [stops], prefs: trip.prefs, llm: llm)
         let annotatedStops = annotated.stops.first ?? stops
         day.theme = annotated.themes.first.flatMap { $0 } ?? day.theme
-        let newItems = await ItineraryDayBuilder.buildItems(from: annotatedStops, source: source, city: adcode)
+        let newItems = await ItineraryDayBuilder.buildItems(from: annotatedStops,
+                                                            source: routedSource, city: adcode)
 
         for old in day.items {
             context.delete(old)
