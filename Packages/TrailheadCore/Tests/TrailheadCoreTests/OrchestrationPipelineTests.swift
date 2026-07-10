@@ -230,4 +230,18 @@ final class OrchestrationPipelineTests: XCTestCase {
         XCTAssertEqual(times, times.sorted())
         XCTAssertEqual(perDay[0].first?.time, "09:00")                       // 首点从 dayStart 起
     }
+
+    func testPlannerUsesCityTransitEstimate() async throws {
+        let stops = [sight("west", 0, 0), sight("east", 0, 0.03)]
+
+        let driving = try await ItineraryDayBuilder.planStops(
+            prefs: TripPrefs(pace: .relaxed), candidates: stops, days: 1,
+            llm: StubLLMProvider())
+        let transit = try await ItineraryDayBuilder.planStops(
+            prefs: TripPrefs(pace: .relaxed), candidates: stops, days: 1,
+            llm: StubLLMProvider(), city: "110100")
+
+        XCTAssertEqual(driving[0].last?.time, "10:39")
+        XCTAssertEqual(transit[0].last?.time, "10:46")
+    }
 }

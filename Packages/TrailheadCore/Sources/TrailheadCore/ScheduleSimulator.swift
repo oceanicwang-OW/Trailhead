@@ -128,20 +128,22 @@ public enum ScheduleSimulator {
         for (i, stop) in order.enumerated() {
             let travel = prev.map { TravelEstimator.minutes(from: $0, to: stop, city: city) } ?? 0
             var arrival = t + travel
+            let stay = StayDuration.duration(for: stop, pace: pace, priors: priors)
 
             if let windows = OpenHoursParser.schedule(stop.openHours).windows(on: weekday) {
                 if windows.isEmpty { return .closedDay(i) }
                 guard let w = windows.sorted(by: { $0.open < $1.open })
-                    .first(where: { arrival <= $0.close }) else { return .missedWindow(i) }
+                    .first(where: { max(arrival, $0.open) + stay <= $0.close }) else {
+                    return .missedWindow(i)
+                }
                 if w.open > arrival {
                     if w.open - arrival > maxWait { return .overWait(i) }
                     arrival = w.open          // 早到 ≤ maxWait → 等待到开门
                 }
             }
 
-            if arrival > dayEnd { return .overflow(i) }
+            if arrival + stay > dayEnd { return .overflow(i) }
 
-            let stay = StayDuration.duration(for: stop, pace: pace, priors: priors)
             out.append(ScheduledStop(candidate: stop, arrival: arrival, stayMin: stay))
             t = arrival + stay
             prev = stop

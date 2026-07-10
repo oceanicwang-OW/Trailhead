@@ -48,7 +48,7 @@ public enum ItineraryFeasibility {
                 }
                 // D2：按当日 weekday 取窗（周闭馆日窗为 []，任何到达都不在窗内）。
                 if let windows = OpenHoursParser.schedule(s.candidate.openHours).windows(on: weekday),
-                   let t, !within(t, windows) {
+                   let t, !within(t, stayMin: s.stayMin ?? 0, windows) {
                     violations.append("day \(dayIdx): 到达不在当日营业窗，丢弃 \(s.candidate.id)")
                     continue
                 }
@@ -101,8 +101,8 @@ public enum ItineraryFeasibility {
         return h * 60 + m
     }
 
-    private static func within(_ t: Int, _ windows: [OpenHoursParser.Window]) -> Bool {
-        windows.contains { t >= $0.open && t <= $0.close }
+    private static func within(_ t: Int, stayMin: Int, _ windows: [OpenHoursParser.Window]) -> Bool {
+        windows.contains { t >= $0.open && t + stayMin <= $0.close }
     }
 
     /// D8(b)：数一天动线中「相邻两段夹角 < 30°」的顶点数。夹角取顶点处两来向的内角

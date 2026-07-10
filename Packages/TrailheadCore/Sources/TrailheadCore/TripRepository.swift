@@ -154,7 +154,8 @@ public struct TripRepository {
                                                              candidates: available,
                                                              days: 1,
                                                              llm: llm,
-                                                             startDate: day.date)
+                                                             startDate: day.date,
+                                                             city: adcode)
         guard let stops = perDay.first, !stops.isEmpty else {
             throw ItineraryEngine.EngineError.emptyPlan
         }

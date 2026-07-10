@@ -39,6 +39,14 @@ final class ItineraryFeasibilityTests: XCTestCase {
         XCTAssertFalse(report.isFeasible)
     }
 
+    func testVisitFinishingAfterCloseIsDropped() {
+        let day = [stop("late", "16:30", openHours: "09:00-17:00")]
+        let (plan, report) = ItineraryFeasibility.check([day], days: 1, maxSightsPerDay: 4)
+
+        XCTAssertTrue(plan[0].isEmpty)
+        XCTAssertFalse(report.isFeasible)
+    }
+
     func testAllDayNeverDropped() {
         let day = [stop("a", "09:00"), stop("x", "23:00", openHours: "全天")]
         let (plan, report) = ItineraryFeasibility.check([day], days: 1, maxSightsPerDay: 4)

@@ -17,7 +17,8 @@ public enum ItineraryDayBuilder {
     /// 排除集（D9）由调用方在 candidates 里预先过滤（见 TripRepository.regenerateDay）。
     public static func planStops(prefs: TripPrefs, candidates: [POICandidate],
                                  days: Int, llm: LLMProvider,
-                                 startDate: Date? = nil) async throws -> [[PlannedStop]] {
+                                 startDate: Date? = nil,
+                                 city: String = "") async throws -> [[PlannedStop]] {
         _ = llm  // 几何步骤不使用 LLM（保持 100% 确定性）；文案由上层 NoteWriter 叠加（P7.1），参数保留维持对外契约（C3）。
 
         // 1. 按 kind 拆分：sights（含 other，即非食非住）/ food。住宿已在调用前剔除。
@@ -53,7 +54,7 @@ public enum ItineraryDayBuilder {
             let (routed, converged) = DayRouter.routeWithDiagnostics(cluster, entryAnchor: previousExit)
             routerConverged.append(converged)
             // 4. 第一遍模拟（仅景点）→ 临时时刻线；丢点按分牺牲进 spill 池（D1/D3）。
-            let first = ScheduleSimulator.simulate(stops: routed, pace: pace, city: "", weekday: wd,
+            let first = ScheduleSimulator.simulate(stops: routed, pace: pace, city: city, weekday: wd,
                                                    dayStart: dayStart, dayEnd: dayEnd, scores: scores)
             spillPool += first.spilled.map { (day: dayIdx, stop: $0) }
             // 5. 按临时时刻线插午/晚餐（餐窗中点定位 + 顺路绕行选店，跨天去重，D1）。
@@ -61,7 +62,7 @@ public enum ItineraryDayBuilder {
                                                     usedIds: usedFood)
             for stop in withMeals where stop.kind == .food { usedFood.insert(stop.id) }
             // 6. 第二遍模拟（景点+餐饮）→ 终版顺序；被挤掉的景点同样进 spill（餐饮软约束不重插）。
-            let second = ScheduleSimulator.simulate(stops: withMeals, pace: pace, city: "", weekday: wd,
+            let second = ScheduleSimulator.simulate(stops: withMeals, pace: pace, city: city, weekday: wd,
                                                     dayStart: dayStart, dayEnd: dayEnd, scores: scores)
             spillPool += second.spilled.filter { $0.candidate.kind != .food }
                 .map { (day: dayIdx, stop: $0) }
@@ -72,7 +73,7 @@ public enum ItineraryDayBuilder {
         // 7. SpillRepair：spill 按分数降序跨天重插；days==1 无处可去，直接进丢弃清单（D3）。
         var dropped: [SpilledStop] = []
         if days > 1, !spillPool.isEmpty {
-            let ctx = SpillRepair.Context(pace: pace, city: "", weekdays: weekdays,
+            let ctx = SpillRepair.Context(pace: pace, city: city, weekdays: weekdays,
                                           dayStart: dayStart, dayEnd: dayEnd, scores: scores,
                                           maxSightsPerDay: maxPerDay, stayBudget: stayBudget)
             (dayOrders, dropped) = SpillRepair.repair(dayOrders: dayOrders, spill: spillPool, context: ctx)
@@ -85,7 +86,7 @@ public enum ItineraryDayBuilder {
         var result: [[PlannedStop]] = []
         for (dayIdx, order) in dayOrders.enumerated() {
             let wd = weekdays[min(dayIdx, weekdays.count - 1)]
-            let sim = ScheduleSimulator.simulate(stops: order, pace: pace, city: "", weekday: wd,
+            let sim = ScheduleSimulator.simulate(stops: order, pace: pace, city: city, weekday: wd,
                                                  dayStart: dayStart, dayEnd: dayEnd, scores: scores)
             result.append(sim.scheduled.map {
                 PlannedStop(candidate: $0.candidate, time: clock($0.arrival),

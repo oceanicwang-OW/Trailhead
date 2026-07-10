@@ -73,9 +73,9 @@ final class ScheduleSimulatorTests: XCTestCase {
     }
 
     func testMissedWindowRescuedBySwapKeepsBothStops() {
-        // 09:00-09:30 早闭点排第二会错过；与前点交换后 09:00 到达在窗内 → 两点都保住。
+        // 09:00-10:30 早闭点排第二时已经无法在闭馆前完成；交换到首位后刚好完成 → 两点都保住。
         let first = poi("open", 0, 0)
-        let narrow = poi("narrow", 0, 0, openHours: "09:00-09:30")
+        let narrow = poi("narrow", 0, 0, openHours: "09:00-10:30")
         let out = ScheduleSimulator.simulate(stops: [first, narrow], pace: .relaxed, city: "",
                                              dayStart: start, dayEnd: end)
         XCTAssertEqual(out.scheduled.map(\.candidate.id), ["narrow", "open"])
@@ -83,11 +83,10 @@ final class ScheduleSimulatorTests: XCTestCase {
     }
 
     func testLateArrivalRescuedBySwapWithPrevious() {
-        // 迟到交换前移：b 只开到 11:00，排在 a（停 90 分）后会 10:30 到、11:00 前赶不完？
-        // 10:30 ≤ close 11:00 仍可行；改用 10:00 闭门 → a 后到达 10:30 > 10:00 错过 →
-        // 与 a 交换 → b 09:00 落位、a 其后，两点都保住。
+        // 迟到交换前移：b 必须在 10:30 前完成，排在 a（停 90 分）后会 10:30 才到 →
+        // 与 a 交换后 b 在 09:00–10:30 完成、a 其后，两点都保住。
         let a = poi("a", 0, 0)
-        let b = poi("b", 0, 0, openHours: "09:00-10:00")
+        let b = poi("b", 0, 0, openHours: "09:00-10:30")
         let out = ScheduleSimulator.simulate(stops: [a, b], pace: .relaxed, city: "",
                                              dayStart: start, dayEnd: end)
         XCTAssertEqual(out.scheduled.map(\.candidate.id), ["b", "a"])
@@ -121,9 +120,29 @@ final class ScheduleSimulatorTests: XCTestCase {
         let b = poi("b", 0, 0, rating: 3.0)
         let c = poi("c", 0, 0, rating: 5.0)
         let out = ScheduleSimulator.simulate(stops: [a, b, c], pace: .relaxed, city: "",
-                                             dayStart: start, dayEnd: 11 * 60 + 30)
+                                             dayStart: start, dayEnd: 12 * 60)
         XCTAssertEqual(out.scheduled.map(\.candidate.id), ["a", "c"])
         XCTAssertEqual(out.spilled.map(\.candidate.id), ["b"])
+        XCTAssertEqual(out.spilled.first?.reason, "超出当日时间窗")
+    }
+
+    func testVisitMustFinishBeforeClosingTime() {
+        let stop = poi("late", 0, 0, openHours: "09:00-10:00")
+        let out = ScheduleSimulator.simulate(stops: [stop], pace: .relaxed, city: "",
+                                             dayStart: start, dayEnd: end)
+
+        XCTAssertTrue(out.scheduled.isEmpty)
+        XCTAssertEqual(out.spilled.first?.candidate.id, "late")
+        XCTAssertEqual(out.spilled.first?.reason, "错过营业窗")
+    }
+
+    func testVisitMustFinishBeforeDayEnd() {
+        let stop = poi("late", 0, 0)
+        let out = ScheduleSimulator.simulate(stops: [stop], pace: .relaxed, city: "",
+                                             dayStart: 19 * 60, dayEnd: end)
+
+        XCTAssertTrue(out.scheduled.isEmpty)
+        XCTAssertEqual(out.spilled.first?.candidate.id, "late")
         XCTAssertEqual(out.spilled.first?.reason, "超出当日时间窗")
     }
 
