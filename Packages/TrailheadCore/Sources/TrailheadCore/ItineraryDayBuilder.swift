@@ -18,7 +18,8 @@ public enum ItineraryDayBuilder {
     public static func planStops(prefs: TripPrefs, candidates: [POICandidate],
                                  days: Int, llm: LLMProvider,
                                  startDate: Date? = nil,
-                                 city: String = "") async throws -> [[PlannedStop]] {
+                                 city: String = "",
+                                 baseAnchor: POICandidate? = nil) async throws -> [[PlannedStop]] {
         _ = llm  // 几何步骤不使用 LLM（保持 100% 确定性）；文案由上层 NoteWriter 叠加（P7.1），参数保留维持对外契约（C3）。
 
         // 1. 按 kind 拆分：sights（含 other，即非食非住）/ food。住宿已在调用前剔除。
@@ -53,12 +54,17 @@ public enum ItineraryDayBuilder {
 
         for (dayIdx, cluster) in dayClusters.enumerated() {
             let wd = weekdays[min(dayIdx, weekdays.count - 1)]
+            let baseCoordinate = baseAnchor.map { (lat: $0.lat, lng: $0.lng) }
             // 3. 簇内排序（贪心NN + 2-opt；天间用上一天出口锚点衔接；收敛标志供 D8 软断言）。
-            let (routed, converged) = DayRouter.routeWithDiagnostics(cluster, entryAnchor: previousExit)
+            let (routed, converged) = DayRouter.routeWithDiagnostics(
+                cluster, entryAnchor: baseCoordinate ?? previousExit,
+                exitAnchor: baseCoordinate
+            )
             routerConverged.append(converged)
             // 4. 第一遍模拟（仅景点）→ 临时时刻线；丢点按分牺牲进 spill 池（D1/D3）。
             let first = ScheduleSimulator.simulate(stops: routed, pace: pace, city: city, weekday: wd,
-                                                   dayStart: dayStart, dayEnd: dayEnd, scores: scores)
+                                                   dayStart: dayStart, dayEnd: dayEnd, scores: scores,
+                                                   entryAnchor: baseAnchor, exitAnchor: baseAnchor)
             spillPool += first.spilled.map { (day: dayIdx, stop: $0) }
             // 5. 按临时时刻线插午/晚餐（餐窗中点定位 + 顺路绕行选店，跨天去重，D1）。
             let withMeals = MealSlotter.insertMeals(schedule: first.scheduled, foodPool: food,
@@ -67,11 +73,14 @@ public enum ItineraryDayBuilder {
             for stop in withMeals where stop.kind == .food { usedFood.insert(stop.id) }
             // 6. 第二遍模拟（景点+餐饮）→ 终版顺序；被挤掉的景点同样进 spill（餐饮软约束不重插）。
             let second = ScheduleSimulator.simulate(stops: withMeals, pace: pace, city: city, weekday: wd,
-                                                    dayStart: dayStart, dayEnd: dayEnd, scores: scores)
+                                                    dayStart: dayStart, dayEnd: dayEnd, scores: scores,
+                                                    entryAnchor: baseAnchor, exitAnchor: baseAnchor)
             spillPool += second.spilled.filter { $0.candidate.kind != .food }
                 .map { (day: dayIdx, stop: $0) }
             dayOrders.append(second.scheduled.map(\.candidate))
-            previousExit = second.scheduled.last.map { (lat: $0.candidate.lat, lng: $0.candidate.lng) }
+            if baseAnchor == nil {
+                previousExit = second.scheduled.last.map { (lat: $0.candidate.lat, lng: $0.candidate.lng) }
+            }
         }
 
         // 7. SpillRepair：spill 按分数降序跨天重插；days==1 无处可去，直接进丢弃清单（D3）。
@@ -79,7 +88,8 @@ public enum ItineraryDayBuilder {
         if days > 1, !spillPool.isEmpty {
             let ctx = SpillRepair.Context(pace: pace, city: city, weekdays: weekdays,
                                           dayStart: dayStart, dayEnd: dayEnd, scores: scores,
-                                          maxSightsPerDay: maxPerDay, stayBudget: stayBudget)
+                                          baseAnchor: baseAnchor, maxSightsPerDay: maxPerDay,
+                                          stayBudget: stayBudget)
             (dayOrders, dropped) = SpillRepair.repair(dayOrders: dayOrders, spill: spillPool, context: ctx)
         } else {
             dropped = spillPool.map(\.stop)
@@ -91,7 +101,8 @@ public enum ItineraryDayBuilder {
         for (dayIdx, order) in dayOrders.enumerated() {
             let wd = weekdays[min(dayIdx, weekdays.count - 1)]
             let sim = ScheduleSimulator.simulate(stops: order, pace: pace, city: city, weekday: wd,
-                                                 dayStart: dayStart, dayEnd: dayEnd, scores: scores)
+                                                 dayStart: dayStart, dayEnd: dayEnd, scores: scores,
+                                                 entryAnchor: baseAnchor, exitAnchor: baseAnchor)
             result.append(sim.scheduled.map {
                 PlannedStop(candidate: $0.candidate, time: clock($0.arrival),
                             stayMin: $0.stayMin, note: nil)
@@ -109,6 +120,7 @@ public enum ItineraryDayBuilder {
     public static func reconcileWithRoutes(stops: [[PlannedStop]], prefs: TripPrefs,
                                            source: POIDataSource, city: String,
                                            startDate: Date? = nil,
+                                           baseAnchor: POICandidate? = nil,
                                            maxPasses: Int = 4) async -> [[PlannedStop]] {
         guard !stops.isEmpty else { return [] }
 
@@ -123,7 +135,8 @@ public enum ItineraryDayBuilder {
         }, uniquingKeysWith: { a, _ in a })
 
         for _ in 0..<max(1, maxPasses) {
-            travelTimes = await loadRouteTimes(for: orders, source: source, city: city,
+            travelTimes = await loadRouteTimes(for: orders, baseAnchor: baseAnchor,
+                                               source: source, city: city,
                                                existing: travelTimes)
             var nextOrders: [[POICandidate]] = []
             var spill: [(day: Int, stop: SpilledStop)] = []
@@ -133,7 +146,8 @@ public enum ItineraryDayBuilder {
                 let simulation = ScheduleSimulator.simulate(
                     stops: order, pace: prefs.pace, city: city,
                     weekday: weekdays[dayIndex], dayStart: dayStart, dayEnd: dayEnd,
-                    scores: scores, travelTimes: travelTimes
+                    scores: scores, travelTimes: travelTimes,
+                    entryAnchor: baseAnchor, exitAnchor: baseAnchor
                 )
                 scheduledByDay.append(simulation.scheduled)
                 nextOrders.append(simulation.scheduled.map(\.candidate))
@@ -145,7 +159,8 @@ public enum ItineraryDayBuilder {
                 let context = SpillRepair.Context(
                     pace: prefs.pace, city: city, weekdays: weekdays,
                     dayStart: dayStart, dayEnd: dayEnd, scores: scores,
-                    travelTimes: travelTimes, maxSightsPerDay: maxPerDay,
+                    travelTimes: travelTimes, baseAnchor: baseAnchor,
+                    maxSightsPerDay: maxPerDay,
                     stayBudget: stayBudget
                 )
                 nextOrders = SpillRepair.repair(dayOrders: nextOrders, spill: spill, context: context).dayOrders
@@ -163,13 +178,15 @@ public enum ItineraryDayBuilder {
             }
         }
 
-        travelTimes = await loadRouteTimes(for: orders, source: source, city: city,
+        travelTimes = await loadRouteTimes(for: orders, baseAnchor: baseAnchor,
+                                           source: source, city: city,
                                            existing: travelTimes)
         return orders.enumerated().map { dayIndex, order in
             ScheduleSimulator.simulate(
                 stops: order, pace: prefs.pace, city: city,
                 weekday: weekdays[dayIndex], dayStart: dayStart, dayEnd: dayEnd,
-                scores: scores, travelTimes: travelTimes
+                scores: scores, travelTimes: travelTimes,
+                entryAnchor: baseAnchor, exitAnchor: baseAnchor
             ).scheduled.map {
                 PlannedStop(candidate: $0.candidate, time: clock($0.arrival),
                             stayMin: $0.stayMin, note: nil)
@@ -177,8 +194,8 @@ public enum ItineraryDayBuilder {
         }
     }
 
-    private static func loadRouteTimes(for orders: [[POICandidate]], source: POIDataSource,
-                                       city: String,
+    private static func loadRouteTimes(for orders: [[POICandidate]], baseAnchor: POICandidate?,
+                                       source: POIDataSource, city: String,
                                        existing: RouteTimeMatrix) async -> RouteTimeMatrix {
         var matrix = existing
         for order in orders where order.count > 1 {
@@ -191,6 +208,26 @@ public enum ItineraryDayBuilder {
                     continue
                 }
                 matrix[key] = segment.minutes
+            }
+        }
+        if let baseAnchor {
+            for order in orders {
+                if let first = order.first {
+                    let key = RouteTimeKey(fromID: baseAnchor.id, toID: first.id)
+                    if matrix[key] == nil,
+                       let segment = await routedSegment(from: baseAnchor, to: first,
+                                                         source: source, city: city) {
+                        matrix[key] = segment.minutes
+                    }
+                }
+                if let last = order.last {
+                    let key = RouteTimeKey(fromID: last.id, toID: baseAnchor.id)
+                    if matrix[key] == nil,
+                       let segment = await routedSegment(from: last, to: baseAnchor,
+                                                         source: source, city: city) {
+                        matrix[key] = segment.minutes
+                    }
+                }
             }
         }
         return matrix

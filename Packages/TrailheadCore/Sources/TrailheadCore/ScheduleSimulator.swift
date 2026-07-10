@@ -63,7 +63,9 @@ public enum ScheduleSimulator {
                                 priors: StayDuration.Priors = .init(),
                                 maxWait: Int = defaultMaxWait,
                                 scores: [String: Double] = [:],
-                                travelTimes: RouteTimeMatrix = [:]) -> DaySimulation {
+                                travelTimes: RouteTimeMatrix = [:],
+                                entryAnchor: POICandidate? = nil,
+                                exitAnchor: POICandidate? = nil) -> DaySimulation {
         guard !stops.isEmpty else { return DaySimulation(scheduled: []) }
 
         var order = stops
@@ -78,7 +80,8 @@ public enum ScheduleSimulator {
             guardCounter += 1
             switch forwardPass(order, pace: pace, city: city, weekday: weekday,
                                dayStart: dayStart, dayEnd: dayEnd, priors: priors, maxWait: maxWait,
-                               travelTimes: travelTimes) {
+                               travelTimes: travelTimes, entryAnchor: entryAnchor,
+                               exitAnchor: exitAnchor) {
             case .success(let scheduled):
                 return DaySimulation(scheduled: scheduled, spilled: spilled)
 
@@ -136,9 +139,10 @@ public enum ScheduleSimulator {
     private static func forwardPass(_ order: [POICandidate], pace: Pace, city: String,
                                     weekday: Int?, dayStart: Int, dayEnd: Int,
                                     priors: StayDuration.Priors, maxWait: Int,
-                                    travelTimes: RouteTimeMatrix) -> PassResult {
+                                    travelTimes: RouteTimeMatrix,
+                                    entryAnchor: POICandidate?, exitAnchor: POICandidate?) -> PassResult {
         var t = dayStart
-        var prev: POICandidate?
+        var prev = entryAnchor
         var out: [ScheduledStop] = []
 
         for (i, stop) in order.enumerated() {
@@ -166,6 +170,11 @@ public enum ScheduleSimulator {
             out.append(ScheduledStop(candidate: stop, arrival: arrival, stayMin: stay))
             t = arrival + stay
             prev = stop
+        }
+        if let last = order.last, let exitAnchor {
+            let travel = travelTimes[RouteTimeKey(fromID: last.id, toID: exitAnchor.id)]
+                ?? TravelEstimator.minutes(from: last, to: exitAnchor, city: city)
+            if t + travel > dayEnd { return .overflow(max(0, order.count - 1)) }
         }
         return .success(out)
     }

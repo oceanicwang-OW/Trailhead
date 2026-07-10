@@ -157,6 +157,40 @@ final class ScheduleSimulatorTests: XCTestCase {
         XCTAssertEqual(out.scheduled.last?.arrival, 12 * 60 + 30)
     }
 
+    func testHotelAnchorTravelShiftsArrivalAndReservesReturn() {
+        let hotel = poi("hotel", 0, 0, kind: .lodging)
+        let stop = poi("sight", 0, 0.03)
+        let matrix = [
+            RouteTimeKey(fromID: "hotel", toID: "sight"): 30,
+            RouteTimeKey(fromID: "sight", toID: "hotel"): 40,
+        ]
+        let out = ScheduleSimulator.simulate(
+            stops: [stop], pace: .relaxed, city: "110100",
+            dayStart: start, dayEnd: 12 * 60, travelTimes: matrix,
+            entryAnchor: hotel, exitAnchor: hotel
+        )
+
+        XCTAssertEqual(out.scheduled.first?.arrival, 9 * 60 + 30)
+        XCTAssertTrue(out.spilled.isEmpty)
+    }
+
+    func testHotelReturnMustFitBeforeDayEnd() {
+        let hotel = poi("hotel", 0, 0, kind: .lodging)
+        let stop = poi("sight", 0, 0.03)
+        let matrix = [
+            RouteTimeKey(fromID: "hotel", toID: "sight"): 30,
+            RouteTimeKey(fromID: "sight", toID: "hotel"): 40,
+        ]
+        let out = ScheduleSimulator.simulate(
+            stops: [stop], pace: .relaxed, city: "110100",
+            dayStart: start, dayEnd: 11 * 60 + 30, travelTimes: matrix,
+            entryAnchor: hotel, exitAnchor: hotel
+        )
+
+        XCTAssertTrue(out.scheduled.isEmpty)
+        XCTAssertEqual(out.spilled.first?.candidate.id, "sight")
+    }
+
     func testTimesStrictlyIncreasing() {
         let stops = [poi("a", 0, 0), poi("b", 0, 0.01), poi("c", 0, 0.02), poi("d", 0, 0.03)]
         let out = ScheduleSimulator.simulate(stops: stops, pace: .relaxed, city: "",

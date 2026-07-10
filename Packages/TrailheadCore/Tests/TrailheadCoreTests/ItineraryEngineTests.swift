@@ -48,7 +48,7 @@ final class ItineraryEngineTests: XCTestCase {
     }
 
     private func hotel(_ id: String, rating: Double) -> POICandidate {
-        POICandidate(id: id, name: id, kind: .lodging, subtype: "", lat: 24.4, lng: 118.0,
+        POICandidate(id: id, name: id, kind: .lodging, subtype: "", lat: 39.90, lng: 116.40,
                      rating: rating, avgPrice: 500)
     }
 
@@ -151,6 +151,7 @@ final class ItineraryEngineTests: XCTestCase {
         XCTAssertEqual(Set(poiIDs), ["S1"])
         XCTAssertEqual(trip.lodgingOptions.map(\.id), ["H1", "H2"]) // 按评分降序成清单
         XCTAssertEqual(trip.lodgingOptions.first?.rating, 4.8)
+        XCTAssertEqual(trip.sortedDays[0].sortedItems.first?.plannedTime, "09:15")
     }
 
     @MainActor

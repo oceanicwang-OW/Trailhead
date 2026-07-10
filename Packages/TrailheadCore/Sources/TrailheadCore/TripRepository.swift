@@ -151,6 +151,9 @@ public struct TripRepository {
             .flatMap { $0.items.compactMap(\.poiId) })
         let available = itineraryCandidates.filter { !otherDayPOIs.contains($0.id) }
         guard !available.isEmpty else { throw ItineraryEngine.EngineError.noCandidates }
+        let baseAnchor = trip.lodgingOptions.first.flatMap { option in
+            candidates.first { $0.id == option.id }
+        }
 
         // day.date 使 D2 周闭馆按该天 weekday 生效。
         let perDay = try await ItineraryDayBuilder.planStops(prefs: trip.prefs,
@@ -158,11 +161,12 @@ public struct TripRepository {
                                                              days: 1,
                                                              llm: llm,
                                                              startDate: day.date,
-                                                             city: adcode)
+                                                             city: adcode,
+                                                             baseAnchor: baseAnchor)
         let routedSource = RouteMemoizingPOISource(base: source)
         let reconciled = await ItineraryDayBuilder.reconcileWithRoutes(
             stops: perDay, prefs: trip.prefs, source: routedSource,
-            city: adcode, startDate: day.date
+            city: adcode, startDate: day.date, baseAnchor: baseAnchor
         )
         guard let stops = reconciled.first, !stops.isEmpty else {
             throw ItineraryEngine.EngineError.emptyPlan

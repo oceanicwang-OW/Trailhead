@@ -46,4 +46,15 @@ final class DayRouterTests: XCTestCase {
         XCTAssertEqual(routed.first?.id, "C")
         XCTAssertEqual(Set(routed.map(\.id)), Set(["A", "B", "C"]))
     }
+
+    func testEntryAndExitAnchorsDetermineRoundTripEnds() {
+        let a = poi("A", 0, 0), b = poi("B", 0, 1), c = poi("C", 0, 2)
+        let routed = DayRouter.route(
+            [b, c, a], entryAnchor: (lat: 0, lng: -0.1),
+            exitAnchor: (lat: 0, lng: 2.1)
+        )
+
+        XCTAssertEqual(routed.first?.id, "A")
+        XCTAssertEqual(routed.last?.id, "C")
+    }
 }

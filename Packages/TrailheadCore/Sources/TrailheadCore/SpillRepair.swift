@@ -18,6 +18,7 @@ public enum SpillRepair {
         public var maxWait: Int
         public var scores: [String: Double]
         public var travelTimes: RouteTimeMatrix
+        public var baseAnchor: POICandidate?
         public var maxSightsPerDay: Int
         public var stayBudget: Int?          // 该天 Σ非餐停留上限（D7；nil = 不启用）
 
@@ -27,11 +28,13 @@ public enum SpillRepair {
                     maxWait: Int = ScheduleSimulator.defaultMaxWait,
                     scores: [String: Double] = [:],
                     travelTimes: RouteTimeMatrix = [:],
+                    baseAnchor: POICandidate? = nil,
                     maxSightsPerDay: Int = 4, stayBudget: Int? = nil) {
             self.pace = pace; self.city = city; self.weekdays = weekdays
             self.dayStart = dayStart; self.dayEnd = dayEnd; self.priors = priors
             self.maxWait = maxWait; self.scores = scores
             self.travelTimes = travelTimes
+            self.baseAnchor = baseAnchor
             self.maxSightsPerDay = maxSightsPerDay; self.stayBudget = stayBudget
         }
     }
@@ -68,7 +71,9 @@ public enum SpillRepair {
                                                      weekday: weekday,
                                                      dayStart: ctx.dayStart, dayEnd: ctx.dayEnd,
                                                      priors: ctx.priors, maxWait: ctx.maxWait,
-                                                     scores: ctx.scores, travelTimes: ctx.travelTimes)
+                                                     scores: ctx.scores, travelTimes: ctx.travelTimes,
+                                                     entryAnchor: ctx.baseAnchor,
+                                                     exitAnchor: ctx.baseAnchor)
                 // 铁律：重插不得破坏目标天已有点（全员保留且零 spill 才接受）。
                 if sim.spilled.isEmpty, sim.scheduled.count == trial.count {
                     orders[d] = sim.scheduled.map(\.candidate)

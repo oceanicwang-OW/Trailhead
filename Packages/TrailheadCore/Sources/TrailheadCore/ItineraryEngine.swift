@@ -47,6 +47,9 @@ public final class ItineraryEngine: ObservableObject {
 
         // 住宿拆成单独清单（不排进每日动线）；行程编排只用非住宿候选。
         let lodging = Self.lodgingShortlist(from: candidates, prefs: prefs)
+        let baseAnchor = lodging.first.flatMap { option in
+            candidates.first { $0.id == option.id }
+        }
         // 确定性规则：点评分 + 偏好加权筛出每类高分点；freeText 点名的点豁免必留。
         let pinned = Self.pinnedIDs(in: candidates, freeText: prefs.freeText)
         let itineraryCandidates = CandidateCuration.curate(candidates.filter { $0.kind != .lodging },
@@ -57,12 +60,12 @@ public final class ItineraryEngine: ObservableObject {
         // startDate 使 D2 周闭馆逐日生效（天序号 → weekday 由 planStops 推导）。
         let perDay = try await ItineraryDayBuilder.planStops(prefs: prefs, candidates: itineraryCandidates,
                                                              days: days, llm: llm, startDate: startDate,
-                                                             city: adcode)
+                                                             city: adcode, baseAnchor: baseAnchor)
 
         let routedSource = RouteMemoizingPOISource(base: source)
         let reconciled = await ItineraryDayBuilder.reconcileWithRoutes(
             stops: perDay, prefs: prefs, source: routedSource,
-            city: adcode, startDate: startDate
+            city: adcode, startDate: startDate, baseAnchor: baseAnchor
         )
 
         set(.dining, 0.6)
