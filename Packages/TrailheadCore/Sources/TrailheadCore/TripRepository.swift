@@ -142,7 +142,10 @@ public struct TripRepository {
         // 住宿单独成清单；行程候选走确定性筛选（点评分 + 偏好加权 + 点名豁免，与整趟生成同规则）。
         let pinned = ItineraryEngine.pinnedIDs(in: candidates, freeText: trip.prefs.freeText)
         let itineraryCandidates = CandidateCuration.curate(candidates.filter { $0.kind != .lodging },
-                                                           tags: trip.prefs.tags, pinned: pinned)
+                                                           tags: trip.prefs.tags,
+                                                           cuisines: trip.prefs.cuisines,
+                                                           budgetPerDay: trip.prefs.budgetPerDay,
+                                                           pinned: pinned)
         // D9 排除集：其余各天已排的全部 poi_id 预先滤掉，重生成的那天不得选中别天已有的点。
         let otherDayPOIs = Set(trip.days.filter { $0.id != day.id }
             .flatMap { $0.items.compactMap(\.poiId) })

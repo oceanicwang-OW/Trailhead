@@ -19,6 +19,9 @@ public enum CandidateCuration {
 
     /// 偏好加权分（命中用户兴趣标签对应的子类型 → 排序时加分，让合偏好的点上浮）。
     static let preferenceBoost = 1.0
+    static let cuisineBoost = 0.75
+    static let affordableBoost = 0.25
+    static let subtypeRepeatPenalty = 0.35
 
     /// 无评分时的中性分（P0 止血）：高德常年缺评分的招牌景点不应被当作 0 分挤出 top-K。
     /// 取值对齐 `PromptBuilder.unratedScore`，同一「无评分中性分」语义应保持一致。
@@ -39,13 +42,24 @@ public enum CandidateCuration {
     /// 规则：① 综合分 = 点评分 + 偏好加权；② 景点/餐饮各取 top-K；③ freeText 点名豁免必留；
     /// ④ 住宿应在调用前已剔除。返回顺序：点名 → 景点(高分优先) → 餐饮 → 其它。
     public static func curate(_ candidates: [POICandidate], tags: [String] = [],
+                              cuisines: [String] = [], budgetPerDay: Int? = nil,
                               pinned: Set<String> = [], limits: Limits = .init()) -> [POICandidate] {
         let nonLodging = candidates.filter { $0.kind != .lodging }
         let pins = nonLodging.filter { pinned.contains($0.id) }   // freeText 点名，豁免筛选
         func topRated(_ pool: [POICandidate], _ limit: Int) -> [POICandidate] {
-            Array(pool.filter { !pinned.contains($0.id) }
-                .sorted { score($0, tags: tags) > score($1, tags: tags) }
-                .prefix(max(0, limit)))
+            var remaining = pool.filter { !pinned.contains($0.id) }
+            var selected: [POICandidate] = []
+            while !remaining.isEmpty, selected.count < max(0, limit) {
+                let best = remaining.indices.max { a, b in
+                    let sa = diversifiedScore(remaining[a], selected: selected, tags: tags,
+                                              cuisines: cuisines, budgetPerDay: budgetPerDay)
+                    let sb = diversifiedScore(remaining[b], selected: selected, tags: tags,
+                                              cuisines: cuisines, budgetPerDay: budgetPerDay)
+                    return sa == sb ? remaining[a].id > remaining[b].id : sa < sb
+                } ?? 0
+                selected.append(remaining.remove(at: best))
+            }
+            return selected
         }
         let sights = topRated(nonLodging.filter { $0.kind == .sight }, limits.sights)
         let food   = topRated(nonLodging.filter { $0.kind == .food }, limits.food)
@@ -54,8 +68,42 @@ public enum CandidateCuration {
     }
 
     /// 综合排序分：有评分用评分（无评分按中性分处理，不再沉底），命中偏好再加权。
-    static func score(_ c: POICandidate, tags: [String]) -> Double {
-        (c.rating ?? neutralRating) + (matchesPreference(c, tags: tags) ? preferenceBoost : 0)
+    static func score(_ c: POICandidate, tags: [String],
+                      cuisines: [String] = [], budgetPerDay: Int? = nil) -> Double {
+        var result = c.rating ?? neutralRating
+        if matchesPreference(c, tags: tags) { result += preferenceBoost }
+        if c.kind == .food, matchesAny(c, terms: cuisines) { result += cuisineBoost }
+        if let budgetPerDay, let price = c.avgPrice {
+            let targetRatio = c.kind == .food ? 0.25 : 0.35
+            let target = max(1, Double(budgetPerDay) * targetRatio)
+            let ratio = Double(price) / target
+            if ratio <= 1 {
+                result += affordableBoost
+            } else {
+                result -= min(2, (ratio - 1) * 0.75)
+            }
+        }
+        return result
+    }
+
+    private static func diversifiedScore(_ c: POICandidate, selected: [POICandidate],
+                                         tags: [String], cuisines: [String],
+                                         budgetPerDay: Int?) -> Double {
+        let repeats = selected.filter { diversityKey($0) == diversityKey(c) }.count
+        return score(c, tags: tags, cuisines: cuisines, budgetPerDay: budgetPerDay)
+            - Double(repeats) * subtypeRepeatPenalty
+    }
+
+    private static func diversityKey(_ c: POICandidate) -> String {
+        let subtype = c.subtype.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return subtype.isEmpty ? c.kind.rawValue : subtype
+    }
+
+    static func matchesAny(_ c: POICandidate, terms: [String]) -> Bool {
+        let haystacks = [c.name, c.subtype] + c.tags
+        return terms.contains { term in
+            !term.isEmpty && haystacks.contains { $0.localizedCaseInsensitiveContains(term) }
+        }
     }
 
     /// 候选的子类型或名称是否命中任一所选兴趣标签的关键词。

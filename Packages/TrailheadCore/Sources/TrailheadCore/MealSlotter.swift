@@ -30,7 +30,9 @@ public enum MealSlotter {
     public static func insertMeals(schedule: [ScheduledStop], foodPool: [POICandidate],
                                    usedIds: Set<String> = [],
                                    windows: MealWindows = .init(),
-                                   detourWeight: Double = defaultDetourWeight) -> [POICandidate] {
+                                   detourWeight: Double = defaultDetourWeight,
+                                   cuisines: [String] = [],
+                                   budgetPerDay: Int? = nil) -> [POICandidate] {
         guard !schedule.isEmpty else { return [] }
 
         var used = usedIds
@@ -39,7 +41,8 @@ public enum MealSlotter {
             guard let anchor = anchorIndex(for: mid, in: schedule) else { continue }
             let next = anchor + 1 < schedule.count ? schedule[anchor + 1].candidate : nil
             guard let pick = pickFood(prev: schedule[anchor].candidate, next: next,
-                                      pool: foodPool, used: used, detourWeight: detourWeight) else { continue }
+                                      pool: foodPool, used: used, detourWeight: detourWeight,
+                                      cuisines: cuisines, budgetPerDay: budgetPerDay) else { continue }
             used.insert(pick.id)                              // 去重：晚餐不再选同一家
             meals.append((anchor, pick))
         }
@@ -66,11 +69,13 @@ public enum MealSlotter {
     /// 综合分 = 评分（缺失取中性分）− λ × 绕行公里数，取最大（平手按 poi_id 破平，确定性）。
     private static func pickFood(prev: POICandidate, next: POICandidate?,
                                  pool: [POICandidate], used: Set<String>,
-                                 detourWeight: Double) -> POICandidate? {
+                                 detourWeight: Double, cuisines: [String],
+                                 budgetPerDay: Int?) -> POICandidate? {
         let usable = pool.filter { $0.kind == .food && !used.contains($0.id) }
         guard !usable.isEmpty else { return nil }
         func rank(_ f: POICandidate) -> Double {
-            (f.rating ?? CandidateCuration.neutralRating) - detourWeight * detourKm(f, prev: prev, next: next)
+            CandidateCuration.score(f, tags: [], cuisines: cuisines, budgetPerDay: budgetPerDay)
+                - detourWeight * detourKm(f, prev: prev, next: next)
         }
         return usable.max {
             let (ra, rb) = (rank($0), rank($1))

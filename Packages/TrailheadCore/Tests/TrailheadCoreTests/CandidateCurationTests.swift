@@ -62,4 +62,46 @@ final class CandidateCurationTests: XCTestCase {
         XCTAssertEqual(out.first?.id, "named")              // 点名置前
         XCTAssertTrue(out.contains { $0.id == "named" })    // 未被 top-3 截断砍掉
     }
+
+    func testBudgetCanLiftAffordableFood() {
+        let expensive = POICandidate(id: "expensive", name: "expensive", kind: .food,
+                                     subtype: "餐厅", lat: 0, lng: 0, rating: 4.8,
+                                     avgPrice: 300)
+        let affordable = POICandidate(id: "affordable", name: "affordable", kind: .food,
+                                      subtype: "餐厅", lat: 0, lng: 0, rating: 4.5,
+                                      avgPrice: 50)
+        let out = CandidateCuration.curate(
+            [expensive, affordable], budgetPerDay: 200,
+            limits: .init(sights: 0, food: 2, other: 0)
+        )
+
+        XCTAssertEqual(out.first?.id, "affordable")
+    }
+
+    func testCuisinePreferenceLiftsMatchingFood() {
+        let generic = POICandidate(id: "generic", name: "普通餐厅", kind: .food,
+                                   subtype: "中餐", lat: 0, lng: 0, rating: 4.7)
+        let match = POICandidate(id: "match", name: "川菜馆", kind: .food,
+                                 subtype: "川菜", lat: 0, lng: 0, rating: 4.2)
+        let out = CandidateCuration.curate(
+            [generic, match], cuisines: ["川菜"],
+            limits: .init(sights: 0, food: 2, other: 0)
+        )
+
+        XCTAssertEqual(out.first?.id, "match")
+    }
+
+    func testSubtypeDiversityAvoidsDuplicateTopK() {
+        let museumA = POICandidate(id: "museum-a", name: "A", kind: .sight,
+                                   subtype: "博物馆", lat: 0, lng: 0, rating: 4.9)
+        let museumB = POICandidate(id: "museum-b", name: "B", kind: .sight,
+                                   subtype: "博物馆", lat: 0, lng: 0, rating: 4.8)
+        let park = POICandidate(id: "park", name: "C", kind: .sight,
+                                subtype: "公园", lat: 0, lng: 0, rating: 4.6)
+        let out = CandidateCuration.curate(
+            [museumA, museumB, park], limits: .init(sights: 2, food: 0, other: 0)
+        )
+
+        XCTAssertEqual(out.map(\.id), ["museum-a", "park"])
+    }
 }

@@ -55,4 +55,20 @@ final class FoodLodgingOptionTests: XCTestCase {
         XCTAssertEqual(out.first?.tags, ["近地铁"])            // 环境/服务标签带到清单
         XCTAssertEqual(out.first?.photos, ["https://x/1.jpg"])
     }
+
+    @MainActor
+    func testLodgingShortlistRespectsDailyBudget() {
+        let expensive = POICandidate(id: "expensive", name: "高价酒店", kind: .lodging,
+                                     subtype: "豪华型", lat: 0, lng: 0, rating: 4.9,
+                                     avgPrice: 600)
+        let affordable = POICandidate(id: "affordable", name: "经济酒店", kind: .lodging,
+                                      subtype: "经济型", lat: 0, lng: 0, rating: 4.7,
+                                      avgPrice: 200)
+
+        let out = ItineraryEngine.lodgingShortlist(
+            from: [expensive, affordable], prefs: TripPrefs(budgetPerDay: 400)
+        )
+
+        XCTAssertEqual(out.first?.id, "affordable")
+    }
 }

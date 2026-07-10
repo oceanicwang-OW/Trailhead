@@ -46,11 +46,12 @@ public final class ItineraryEngine: ObservableObject {
         set(.routing, 0.4)
 
         // 住宿拆成单独清单（不排进每日动线）；行程编排只用非住宿候选。
-        let lodging = Self.lodgingShortlist(from: candidates)
+        let lodging = Self.lodgingShortlist(from: candidates, prefs: prefs)
         // 确定性规则：点评分 + 偏好加权筛出每类高分点；freeText 点名的点豁免必留。
         let pinned = Self.pinnedIDs(in: candidates, freeText: prefs.freeText)
         let itineraryCandidates = CandidateCuration.curate(candidates.filter { $0.kind != .lodging },
-                                                           tags: prefs.tags, pinned: pinned)
+                                                           tags: prefs.tags, cuisines: prefs.cuisines,
+                                                           budgetPerDay: prefs.budgetPerDay, pinned: pinned)
         guard !itineraryCandidates.isEmpty else { throw EngineError.noCandidates }
 
         // startDate 使 D2 周闭馆逐日生效（天序号 → weekday 由 planStops 推导）。
@@ -94,14 +95,34 @@ public final class ItineraryEngine: ObservableObject {
     }
 
     /// 取评分最高的若干住宿作为候选清单（PDR：住宿不排进动线，单独成清单）。
-    static func lodgingShortlist(from candidates: [POICandidate], limit: Int = 6) -> [LodgingOption] {
+    static func lodgingShortlist(from candidates: [POICandidate], prefs: TripPrefs? = nil,
+                                 limit: Int = 6) -> [LodgingOption] {
         candidates
             .filter { $0.kind == .lodging }
-            .sorted { ($0.rating ?? 0) > ($1.rating ?? 0) }
+            .sorted {
+                let left = lodgingScore($0, prefs: prefs)
+                let right = lodgingScore($1, prefs: prefs)
+                return left == right ? $0.id < $1.id : left > right
+            }
             .prefix(limit)
             .map { LodgingOption(id: $0.id, name: $0.name, rating: $0.rating,
                                  avgPrice: $0.avgPrice, lat: $0.lat, lng: $0.lng,
                                  tags: $0.tags, photos: $0.photos) }
+    }
+
+    private static func lodgingScore(_ candidate: POICandidate, prefs: TripPrefs?) -> Double {
+        var score = candidate.rating ?? CandidateCuration.neutralRating
+        guard let prefs else { return score }
+        if !prefs.lodgingType.isEmpty,
+           CandidateCuration.matchesAny(candidate, terms: [prefs.lodgingType]) {
+            score += 0.75
+        }
+        if let price = candidate.avgPrice {
+            let target = max(1, Double(prefs.budgetPerDay) * 0.5)
+            let ratio = Double(price) / target
+            score += ratio <= 1 ? 0.25 : -min(2, (ratio - 1) * 0.75)
+        }
+        return score
     }
 
     // MARK: - 步骤

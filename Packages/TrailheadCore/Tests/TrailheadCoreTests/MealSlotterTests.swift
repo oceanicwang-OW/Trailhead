@@ -101,4 +101,21 @@ final class MealSlotterTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(lunch.arrival, 12 * 60)
         XCTAssertLessThanOrEqual(lunch.arrival, 13 * 60 + 30)
     }
+
+    func testCuisineAndBudgetAffectMealChoice() {
+        let stops = [sight("s0", 0, 0), sight("s1", 0, 0), sight("s2", 0, 0)]
+        let expensive = POICandidate(id: "expensive", name: "普通餐厅", kind: .food,
+                                     subtype: "中餐", lat: 0, lng: 0, rating: 4.9,
+                                     avgPrice: 300)
+        let preferred = POICandidate(id: "preferred", name: "川菜馆", kind: .food,
+                                     subtype: "川菜", lat: 0, lng: 0, rating: 4.4,
+                                     avgPrice: 50)
+
+        let out = MealSlotter.insertMeals(
+            schedule: firstPass(stops), foodPool: [expensive, preferred],
+            cuisines: ["川菜"], budgetPerDay: 200
+        )
+
+        XCTAssertEqual(out.first { $0.kind == .food }?.id, "preferred")
+    }
 }

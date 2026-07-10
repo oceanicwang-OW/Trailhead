@@ -28,7 +28,10 @@ public enum ItineraryDayBuilder {
         let maxPerDay = DayClusterer.maxSights(for: pace)
 
         // 综合分 + 停留先验的统一映射：D3 牺牲、D6 播种、D7 预算共用同一真源。
-        let scores = Dictionary(candidates.map { ($0.id, CandidateCuration.score($0, tags: prefs.tags)) },
+        let scores = Dictionary(candidates.map {
+            ($0.id, CandidateCuration.score($0, tags: prefs.tags, cuisines: prefs.cuisines,
+                                            budgetPerDay: prefs.budgetPerDay))
+        },
                                 uniquingKeysWith: { a, _ in a })
         let stays = Dictionary(candidates.map { ($0.id, StayDuration.duration(for: $0, pace: pace)) },
                                uniquingKeysWith: { a, _ in a })
@@ -59,7 +62,8 @@ public enum ItineraryDayBuilder {
             spillPool += first.spilled.map { (day: dayIdx, stop: $0) }
             // 5. 按临时时刻线插午/晚餐（餐窗中点定位 + 顺路绕行选店，跨天去重，D1）。
             let withMeals = MealSlotter.insertMeals(schedule: first.scheduled, foodPool: food,
-                                                    usedIds: usedFood)
+                                                    usedIds: usedFood, cuisines: prefs.cuisines,
+                                                    budgetPerDay: prefs.budgetPerDay)
             for stop in withMeals where stop.kind == .food { usedFood.insert(stop.id) }
             // 6. 第二遍模拟（景点+餐饮）→ 终版顺序；被挤掉的景点同样进 spill（餐饮软约束不重插）。
             let second = ScheduleSimulator.simulate(stops: withMeals, pace: pace, city: city, weekday: wd,
@@ -114,7 +118,8 @@ public enum ItineraryDayBuilder {
         let maxPerDay = DayClusterer.maxSights(for: prefs.pace)
         let stayBudget = Int(DayClusterer.defaultTimeBudgetRatio * Double(dayEnd - dayStart))
         let scores = Dictionary(orders.flatMap { $0 }.map {
-            ($0.id, CandidateCuration.score($0, tags: prefs.tags))
+            ($0.id, CandidateCuration.score($0, tags: prefs.tags, cuisines: prefs.cuisines,
+                                            budgetPerDay: prefs.budgetPerDay))
         }, uniquingKeysWith: { a, _ in a })
 
         for _ in 0..<max(1, maxPasses) {
