@@ -146,6 +146,17 @@ final class ScheduleSimulatorTests: XCTestCase {
         XCTAssertEqual(out.spilled.first?.reason, "超出当日时间窗")
     }
 
+    func testRealTravelTimeOverridesEstimate() {
+        let a = poi("a", 0, 0)
+        let b = poi("b", 0, 0)
+        let matrix = [RouteTimeKey(fromID: "a", toID: "b"): 120]
+        let out = ScheduleSimulator.simulate(stops: [a, b], pace: .relaxed, city: "",
+                                             dayStart: start, dayEnd: end,
+                                             travelTimes: matrix)
+
+        XCTAssertEqual(out.scheduled.last?.arrival, 12 * 60 + 30)
+    }
+
     func testTimesStrictlyIncreasing() {
         let stops = [poi("a", 0, 0), poi("b", 0, 0.01), poi("c", 0, 0.02), poi("d", 0, 0.03)]
         let out = ScheduleSimulator.simulate(stops: stops, pace: .relaxed, city: "",

@@ -156,14 +156,20 @@ public struct TripRepository {
                                                              llm: llm,
                                                              startDate: day.date,
                                                              city: adcode)
-        guard let stops = perDay.first, !stops.isEmpty else {
+        let routedSource = RouteMemoizingPOISource(base: source)
+        let reconciled = await ItineraryDayBuilder.reconcileWithRoutes(
+            stops: perDay, prefs: trip.prefs, source: routedSource,
+            city: adcode, startDate: day.date
+        )
+        guard let stops = reconciled.first, !stops.isEmpty else {
             throw ItineraryEngine.EngineError.emptyPlan
         }
         // 几何定稿后补文案（note + 当天主题）；失败自动降级留空（P7.1）。
         let annotated = await NoteWriter.annotate(stops: [stops], prefs: trip.prefs, llm: llm)
         let annotatedStops = annotated.stops.first ?? stops
         day.theme = annotated.themes.first.flatMap { $0 } ?? day.theme
-        let newItems = await ItineraryDayBuilder.buildItems(from: annotatedStops, source: source, city: adcode)
+        let newItems = await ItineraryDayBuilder.buildItems(from: annotatedStops,
+                                                            source: routedSource, city: adcode)
 
         for old in day.items {
             context.delete(old)

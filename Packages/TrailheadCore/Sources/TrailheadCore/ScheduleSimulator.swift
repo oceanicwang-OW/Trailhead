@@ -37,6 +37,19 @@ public struct DaySimulation: Equatable, Sendable {
     }
 }
 
+/// 一条有向 POI 边的真实交通耗时缓存键；方向、交通模式的选择由调用方负责。
+public struct RouteTimeKey: Hashable, Sendable {
+    public let fromID: String
+    public let toID: String
+
+    public init(fromID: String, toID: String) {
+        self.fromID = fromID
+        self.toID = toID
+    }
+}
+
+public typealias RouteTimeMatrix = [RouteTimeKey: Int]
+
 public enum ScheduleSimulator {
     /// 早到等待上限（分钟，D5 可配）：超过则交换/后移而非干等。
     public static let defaultMaxWait = 45
@@ -49,7 +62,8 @@ public enum ScheduleSimulator {
                                 dayStart: Int = 9 * 60, dayEnd: Int = 20 * 60,
                                 priors: StayDuration.Priors = .init(),
                                 maxWait: Int = defaultMaxWait,
-                                scores: [String: Double] = [:]) -> DaySimulation {
+                                scores: [String: Double] = [:],
+                                travelTimes: RouteTimeMatrix = [:]) -> DaySimulation {
         guard !stops.isEmpty else { return DaySimulation(scheduled: []) }
 
         var order = stops
@@ -63,7 +77,8 @@ public enum ScheduleSimulator {
         while !order.isEmpty, guardCounter < 8 * stops.count {
             guardCounter += 1
             switch forwardPass(order, pace: pace, city: city, weekday: weekday,
-                               dayStart: dayStart, dayEnd: dayEnd, priors: priors, maxWait: maxWait) {
+                               dayStart: dayStart, dayEnd: dayEnd, priors: priors, maxWait: maxWait,
+                               travelTimes: travelTimes) {
             case .success(let scheduled):
                 return DaySimulation(scheduled: scheduled, spilled: spilled)
 
@@ -120,13 +135,17 @@ public enum ScheduleSimulator {
 
     private static func forwardPass(_ order: [POICandidate], pace: Pace, city: String,
                                     weekday: Int?, dayStart: Int, dayEnd: Int,
-                                    priors: StayDuration.Priors, maxWait: Int) -> PassResult {
+                                    priors: StayDuration.Priors, maxWait: Int,
+                                    travelTimes: RouteTimeMatrix) -> PassResult {
         var t = dayStart
         var prev: POICandidate?
         var out: [ScheduledStop] = []
 
         for (i, stop) in order.enumerated() {
-            let travel = prev.map { TravelEstimator.minutes(from: $0, to: stop, city: city) } ?? 0
+            let travel = prev.map {
+                travelTimes[RouteTimeKey(fromID: $0.id, toID: stop.id)]
+                    ?? TravelEstimator.minutes(from: $0, to: stop, city: city)
+            } ?? 0
             var arrival = t + travel
             let stay = StayDuration.duration(for: stop, pace: pace, priors: priors)
 

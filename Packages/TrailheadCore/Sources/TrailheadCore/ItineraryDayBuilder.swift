@@ -100,6 +100,101 @@ public enum ItineraryDayBuilder {
                                           routerConverged: routerConverged).plan
     }
 
+    /// 用最终候选边的真实高德交通耗时重放排程。真实耗时导致溢出时，景点会再次尝试跨天重插；
+    /// 新产生的相邻边在下一轮补取，直到顺序稳定或达到有限轮次。请求复用由 RouteMemoizingPOISource 承担。
+    public static func reconcileWithRoutes(stops: [[PlannedStop]], prefs: TripPrefs,
+                                           source: POIDataSource, city: String,
+                                           startDate: Date? = nil,
+                                           maxPasses: Int = 4) async -> [[PlannedStop]] {
+        guard !stops.isEmpty else { return [] }
+
+        var orders = stops.map { $0.map(\.candidate) }
+        var travelTimes: RouteTimeMatrix = [:]
+        let weekdays = stops.indices.map { weekday(of: startDate, dayOffset: $0) }
+        let maxPerDay = DayClusterer.maxSights(for: prefs.pace)
+        let stayBudget = Int(DayClusterer.defaultTimeBudgetRatio * Double(dayEnd - dayStart))
+        let scores = Dictionary(orders.flatMap { $0 }.map {
+            ($0.id, CandidateCuration.score($0, tags: prefs.tags))
+        }, uniquingKeysWith: { a, _ in a })
+
+        for _ in 0..<max(1, maxPasses) {
+            travelTimes = await loadRouteTimes(for: orders, source: source, city: city,
+                                               existing: travelTimes)
+            var nextOrders: [[POICandidate]] = []
+            var spill: [(day: Int, stop: SpilledStop)] = []
+            var scheduledByDay: [[ScheduledStop]] = []
+
+            for (dayIndex, order) in orders.enumerated() {
+                let simulation = ScheduleSimulator.simulate(
+                    stops: order, pace: prefs.pace, city: city,
+                    weekday: weekdays[dayIndex], dayStart: dayStart, dayEnd: dayEnd,
+                    scores: scores, travelTimes: travelTimes
+                )
+                scheduledByDay.append(simulation.scheduled)
+                nextOrders.append(simulation.scheduled.map(\.candidate))
+                spill += simulation.spilled.filter { $0.candidate.kind != .food }
+                    .map { (day: dayIndex, stop: $0) }
+            }
+
+            if orders.count > 1, !spill.isEmpty {
+                let context = SpillRepair.Context(
+                    pace: prefs.pace, city: city, weekdays: weekdays,
+                    dayStart: dayStart, dayEnd: dayEnd, scores: scores,
+                    travelTimes: travelTimes, maxSightsPerDay: maxPerDay,
+                    stayBudget: stayBudget
+                )
+                nextOrders = SpillRepair.repair(dayOrders: nextOrders, spill: spill, context: context).dayOrders
+            }
+
+            let stable = spill.isEmpty && orderIDs(nextOrders) == orderIDs(orders)
+            orders = nextOrders
+            if stable {
+                return scheduledByDay.map { day in
+                    day.map {
+                        PlannedStop(candidate: $0.candidate, time: clock($0.arrival),
+                                    stayMin: $0.stayMin, note: nil)
+                    }
+                }
+            }
+        }
+
+        travelTimes = await loadRouteTimes(for: orders, source: source, city: city,
+                                           existing: travelTimes)
+        return orders.enumerated().map { dayIndex, order in
+            ScheduleSimulator.simulate(
+                stops: order, pace: prefs.pace, city: city,
+                weekday: weekdays[dayIndex], dayStart: dayStart, dayEnd: dayEnd,
+                scores: scores, travelTimes: travelTimes
+            ).scheduled.map {
+                PlannedStop(candidate: $0.candidate, time: clock($0.arrival),
+                            stayMin: $0.stayMin, note: nil)
+            }
+        }
+    }
+
+    private static func loadRouteTimes(for orders: [[POICandidate]], source: POIDataSource,
+                                       city: String,
+                                       existing: RouteTimeMatrix) async -> RouteTimeMatrix {
+        var matrix = existing
+        for order in orders where order.count > 1 {
+            for index in 1..<order.count {
+                let from = order[index - 1]
+                let to = order[index]
+                let key = RouteTimeKey(fromID: from.id, toID: to.id)
+                guard matrix[key] == nil,
+                      let segment = await routedSegment(from: from, to: to, source: source, city: city) else {
+                    continue
+                }
+                matrix[key] = segment.minutes
+            }
+        }
+        return matrix
+    }
+
+    private static func orderIDs(_ orders: [[POICandidate]]) -> [[String]] {
+        orders.map { $0.map(\.id) }
+    }
+
     /// 天序号 → weekday（1=周一…7=周日）。无日期返回 nil（D2 退化 base 语义）。
     static func weekday(of startDate: Date?, dayOffset: Int) -> Int? {
         guard let startDate else { return nil }
