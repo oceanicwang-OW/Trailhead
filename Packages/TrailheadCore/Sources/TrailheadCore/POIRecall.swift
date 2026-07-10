@@ -21,23 +21,33 @@ public struct POIRecall {
     public func recall(adcode: String, tags: [String], freeText: String = "", now: Date = .now) async throws -> [POICandidate] {
         var seen = Set<String>()
         var out: [POICandidate] = []
+        var firstError: Error?
 
         // ① freeText 关键词命中：用户点名的具体地点优先进池。
         for keyword in POIKeywordExtractor.keywords(from: freeText) {
-            let hits = try await fetchCached(adcode: adcode, category: "kw:\(keyword)", now: now) {
-                try await source.searchPOI(keywords: keyword, adcode: adcode)
+            do {
+                let hits = try await fetchCached(adcode: adcode, category: "kw:\(keyword)", now: now) {
+                    try await source.searchPOI(keywords: keyword, adcode: adcode)
+                }
+                append(hits, into: &out, seen: &seen)
+            } catch {
+                if firstError == nil { firstError = error }
             }
-            append(hits, into: &out, seen: &seen)
         }
 
         // ② 标签召回（每个 tag 一个缓存维度）。
         let categories = tags.isEmpty ? ["景点"] : Array(Set(tags)).sorted()
         for tag in categories {
-            let candidates = try await fetchCached(adcode: adcode, category: tag, now: now) {
-                try await source.searchPOI(adcode: adcode, tags: [tag])
+            do {
+                let candidates = try await fetchCached(adcode: adcode, category: tag, now: now) {
+                    try await source.searchPOI(adcode: adcode, tags: [tag])
+                }
+                append(candidates, into: &out, seen: &seen)
+            } catch {
+                if firstError == nil { firstError = error }
             }
-            append(candidates, into: &out, seen: &seen)
         }
+        if out.isEmpty, let firstError { throw firstError }
         return out
     }
 

@@ -118,4 +118,20 @@ final class MealSlotterTests: XCTestCase {
 
         XCTAssertEqual(out.first { $0.kind == .food }?.id, "preferred")
     }
+
+    func testClosedRestaurantIsSkippedBeforeInsertion() {
+        let stops = [sight("s0", 0, 0), sight("s1", 0, 0), sight("s2", 0, 0)]
+        let closed = POICandidate(id: "closed", name: "午间不营业", kind: .food,
+                                  subtype: "餐厅", lat: 0, lng: 0, rating: 5.0,
+                                  openHours: "18:00-22:00")
+        let open = POICandidate(id: "open", name: "午餐营业", kind: .food,
+                                subtype: "餐厅", lat: 0, lng: 0, rating: 4.0,
+                                openHours: "11:00-14:00")
+
+        let out = MealSlotter.insertMeals(
+            schedule: firstPass(stops), foodPool: [closed, open]
+        )
+
+        XCTAssertEqual(out.first { $0.kind == .food }?.id, "open")
+    }
 }

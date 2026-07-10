@@ -15,9 +15,12 @@ private final class SpyPOISource: POIDataSource {
     }
 
     var failWithQuota = false
+    var failingCategories: Set<String> = []
     func searchPOI(adcode: String, tags: [String]) async throws -> [POICandidate] {
         searchCalls.append((adcode, tags))
-        if failWithQuota { throw AmapError.quotaExceeded }
+        if failWithQuota || tags.contains(where: { failingCategories.contains($0) }) {
+            throw AmapError.quotaExceeded
+        }
         return tags.flatMap { byCategory[$0] ?? [] }
     }
 
@@ -149,5 +152,17 @@ final class POIRecallTests: XCTestCase {
         _ = try await recall.recall(adcode: "510100", tags: ["美食"])   // 成都
 
         XCTAssertEqual(spy.searchCalls.count, 2)   // 异城互不命中
+    }
+
+    func testOneCategoryFailureStillReturnsOtherCandidates() async throws {
+        let spy = SpyPOISource()
+        spy.byCategory = ["景点": [candidate("S1")]]
+        spy.failingCategories = ["美食"]
+        let recall = POIRecall(source: spy, cache: POICache(context: try TestSupport.makeContext()))
+
+        let result = try await recall.recall(adcode: "110100", tags: ["景点", "美食"])
+
+        XCTAssertEqual(result.map(\.id), ["S1"])
+        XCTAssertEqual(spy.searchCalls.count, 2)
     }
 }

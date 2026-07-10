@@ -69,14 +69,17 @@ public enum ItineraryDayBuilder {
             // 5. 按临时时刻线插午/晚餐（餐窗中点定位 + 顺路绕行选店，跨天去重，D1）。
             let withMeals = MealSlotter.insertMeals(schedule: first.scheduled, foodPool: food,
                                                     usedIds: usedFood, cuisines: prefs.cuisines,
-                                                    budgetPerDay: prefs.budgetPerDay)
-            for stop in withMeals where stop.kind == .food { usedFood.insert(stop.id) }
+                                                    budgetPerDay: prefs.budgetPerDay,
+                                                    weekday: wd)
             // 6. 第二遍模拟（景点+餐饮）→ 终版顺序；被挤掉的景点同样进 spill（餐饮软约束不重插）。
             let second = ScheduleSimulator.simulate(stops: withMeals, pace: pace, city: city, weekday: wd,
                                                     dayStart: dayStart, dayEnd: dayEnd, scores: scores,
                                                     entryAnchor: baseAnchor, exitAnchor: baseAnchor)
             spillPool += second.spilled.filter { $0.candidate.kind != .food }
                 .map { (day: dayIdx, stop: $0) }
+            for stop in second.scheduled where stop.candidate.kind == .food {
+                usedFood.insert(stop.candidate.id)
+            }
             dayOrders.append(second.scheduled.map(\.candidate))
             if baseAnchor == nil {
                 previousExit = second.scheduled.last.map { (lat: $0.candidate.lat, lng: $0.candidate.lng) }

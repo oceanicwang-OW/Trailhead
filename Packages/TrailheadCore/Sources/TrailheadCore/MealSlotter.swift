@@ -32,7 +32,8 @@ public enum MealSlotter {
                                    windows: MealWindows = .init(),
                                    detourWeight: Double = defaultDetourWeight,
                                    cuisines: [String] = [],
-                                   budgetPerDay: Int? = nil) -> [POICandidate] {
+                                   budgetPerDay: Int? = nil,
+                                   weekday: Int? = nil) -> [POICandidate] {
         guard !schedule.isEmpty else { return [] }
 
         var used = usedIds
@@ -42,7 +43,8 @@ public enum MealSlotter {
             let next = anchor + 1 < schedule.count ? schedule[anchor + 1].candidate : nil
             guard let pick = pickFood(prev: schedule[anchor].candidate, next: next,
                                       pool: foodPool, used: used, detourWeight: detourWeight,
-                                      cuisines: cuisines, budgetPerDay: budgetPerDay) else { continue }
+                                      cuisines: cuisines, budgetPerDay: budgetPerDay,
+                                      mealMinute: mid, weekday: weekday) else { continue }
             used.insert(pick.id)                              // 去重：晚餐不再选同一家
             meals.append((anchor, pick))
         }
@@ -70,8 +72,12 @@ public enum MealSlotter {
     private static func pickFood(prev: POICandidate, next: POICandidate?,
                                  pool: [POICandidate], used: Set<String>,
                                  detourWeight: Double, cuisines: [String],
-                                 budgetPerDay: Int?) -> POICandidate? {
-        let usable = pool.filter { $0.kind == .food && !used.contains($0.id) }
+                                 budgetPerDay: Int?, mealMinute: Int,
+                                 weekday: Int?) -> POICandidate? {
+        let usable = pool.filter {
+            $0.kind == .food && !used.contains($0.id)
+                && isOpenForMeal($0, at: mealMinute, weekday: weekday)
+        }
         guard !usable.isEmpty else { return nil }
         func rank(_ f: POICandidate) -> Double {
             CandidateCuration.score(f, tags: [], cuisines: cuisines, budgetPerDay: budgetPerDay)
@@ -87,5 +93,14 @@ public enum MealSlotter {
         func d(_ a: POICandidate, _ b: POICandidate) -> Double { ItineraryDayBuilder.haversineMeters(a, b) }
         guard let next else { return d(prev, f) / 1000 }
         return (d(prev, f) + d(f, next) - d(prev, next)) / 1000
+    }
+
+    private static func isOpenForMeal(_ food: POICandidate, at minute: Int,
+                                      weekday: Int?) -> Bool {
+        guard let windows = OpenHoursParser.schedule(food.openHours).windows(on: weekday) else {
+            return true
+        }
+        let mealEnd = minute + StayDuration.Priors().food
+        return windows.contains { minute >= $0.open && mealEnd <= $0.close }
     }
 }
