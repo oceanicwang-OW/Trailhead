@@ -210,10 +210,8 @@ public enum ItineraryDayBuilder {
                 let from = order[index - 1]
                 let to = order[index]
                 let key = RouteTimeKey(fromID: from.id, toID: to.id)
-                guard matrix[key] == nil,
-                      let segment = await routedSegment(from: from, to: to, source: source, city: city) else {
-                    continue
-                }
+                guard matrix[key] == nil else { continue }
+                let segment = await routedSegment(from: from, to: to, source: source, city: city)
                 matrix[key] = segment.minutes
             }
         }
@@ -221,17 +219,17 @@ public enum ItineraryDayBuilder {
             for order in orders {
                 if let first = order.first {
                     let key = RouteTimeKey(fromID: baseAnchor.id, toID: first.id)
-                    if matrix[key] == nil,
-                       let segment = await routedSegment(from: baseAnchor, to: first,
-                                                         source: source, city: city) {
+                    if matrix[key] == nil {
+                        let segment = await routedSegment(from: baseAnchor, to: first,
+                                                          source: source, city: city)
                         matrix[key] = segment.minutes
                     }
                 }
                 if let last = order.last {
                     let key = RouteTimeKey(fromID: last.id, toID: baseAnchor.id)
-                    if matrix[key] == nil,
-                       let segment = await routedSegment(from: last, to: baseAnchor,
-                                                         source: source, city: city) {
+                    if matrix[key] == nil {
+                        let segment = await routedSegment(from: last, to: baseAnchor,
+                                                          source: source, city: city)
                         matrix[key] = segment.minutes
                     }
                 }
@@ -266,17 +264,17 @@ public enum ItineraryDayBuilder {
         var previous: POICandidate?
         for stop in stops {
             if let previous {
-                if let segment = await routedSegment(from: previous, to: stop.candidate,
-                                                     source: source, city: city) {
-                    let transit = PlanItem(order: order, kind: .transit)
-                    transit.transitMode = segment.mode
-                    transit.transitDesc = segment.mode.display
-                    transit.transitMinutes = segment.minutes
-                    transit.transitMeters = segment.meters
-                    transit.transitCost = segment.cost
-                    items.append(transit)
-                    order += 1
-                }
+                let segment = await routedSegment(from: previous, to: stop.candidate,
+                                                  source: source, city: city)
+                let transit = PlanItem(order: order, kind: .transit)
+                transit.transitMode = segment.mode
+                transit.transitDesc = segment.mode.display
+                transit.transitMinutes = segment.minutes
+                transit.transitMeters = segment.meters
+                transit.transitCost = segment.cost
+                transit.transitReliability = segment.reliability
+                items.append(transit)
+                order += 1
             }
 
             let poi = PlanItem(order: order, kind: stop.candidate.kind)
@@ -315,7 +313,7 @@ public enum ItineraryDayBuilder {
     /// 路网严重绕行或请求失败，改用非步行模式重请求（真实 route 回填，短距跨水不再误判步行）。
     public static func routedSegment(from: POICandidate, to: POICandidate,
                                      source: POIDataSource, city: String)
-        async -> (mode: TransitMode, minutes: Int, meters: Int, cost: Int?)? {
+        async -> (mode: TransitMode, minutes: Int, meters: Int, cost: Int?, reliability: TransitReliability) {
         let initial = mode(from: from, to: to, city: city)
         let fallback: TransitMode = city.isEmpty ? .drive : .metro
 
@@ -324,16 +322,23 @@ public enum ItineraryDayBuilder {
             if initial == .walk,
                Double(seg.meters) > walkDetourCap * max(haversineMeters(from, to), 200),
                let alt = try? await source.route(from: from, to: to, mode: fallback, city: city) {
-                return (fallback, alt.minutes, alt.meters, alt.cost)
+                return (fallback, alt.minutes, alt.meters, alt.cost, .verified)
             }
-            return (initial, seg.minutes, seg.meters, seg.cost)
+            return (initial, seg.minutes, seg.meters, seg.cost, .verified)
         }
         // 步行请求失败（水域不可达等）→ 尝试非步行回填；其余模式失败按原语义跳过该段。
         if initial == .walk,
            let alt = try? await source.route(from: from, to: to, mode: fallback, city: city) {
-            return (fallback, alt.minutes, alt.meters, alt.cost)
+            return (fallback, alt.minutes, alt.meters, alt.cost, .verified)
         }
-        return nil
+        let estimatedMode = initial == .walk ? fallback : initial
+        return (
+            estimatedMode,
+            TravelEstimator.minutes(from: from, to: to, mode: estimatedMode),
+            TravelEstimator.meters(from: from, to: to, mode: estimatedMode),
+            nil,
+            .estimated
+        )
     }
 
     static func haversineMeters(_ a: POICandidate, _ b: POICandidate) -> Double {

@@ -10,6 +10,7 @@ import XCTest
 private final class CrossWaterSpySource: POIDataSource {
     var walkMeters = 6000            // 步行路网距离（>3× 直线即触发回填）
     var walkFails = false
+    var allRoutesFail = false
     var nonWalkMinutes = 12
     private(set) var requestedModes: [TransitMode] = []
 
@@ -20,6 +21,7 @@ private final class CrossWaterSpySource: POIDataSource {
     func route(from: POICandidate, to: POICandidate,
                mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         requestedModes.append(mode)
+        if allRoutesFail { throw URLError(.cannotConnectToHost) }
         if mode == .walk {
             if walkFails { throw URLError(.badServerResponse) }
             return (75, walkMeters, nil)
@@ -124,6 +126,25 @@ final class OrchestrationPipelineTests: XCTestCase {
 
         let items = await ItineraryDayBuilder.buildItems(from: stops, source: source, city: "")
         XCTAssertEqual(items.first { $0.kind == .transit }?.transitMode, .drive)
+    }
+
+    @MainActor
+    func testAllRouteRequestsFailCreatesEstimatedTransit() async {
+        let a = sight("a", 31.3900, 121.5000)
+        let b = sight("b", 31.3900, 121.5500)
+        let source = CrossWaterSpySource()
+        source.allRoutesFail = true
+        let stops = [PlannedStop(candidate: a, time: "09:00", stayMin: 60, note: nil),
+                     PlannedStop(candidate: b, time: "11:00", stayMin: 60, note: nil)]
+
+        let items = await ItineraryDayBuilder.buildItems(from: stops, source: source, city: "310000")
+        let transit = items.first { $0.kind == .transit }
+
+        XCTAssertEqual(items.map(\.kind), [.sight, .transit, .sight])
+        XCTAssertEqual(transit?.transitMode, .metro)
+        XCTAssertEqual(transit?.transitReliability, .estimated)
+        XCTAssertGreaterThan(transit?.transitMinutes ?? 0, 0)
+        XCTAssertGreaterThan(transit?.transitMeters ?? 0, 0)
     }
 
     @MainActor

@@ -68,4 +68,18 @@ final class TravelEstimatorTests: XCTestCase {
         let a = poi(1, 1)
         XCTAssertEqual(TravelEstimator.minutes(from: a, to: a, city: ""), 0)
     }
+
+    func testExplicitModeProducesMatchingMetersAndMinutes() {
+        let a = poi(0, 0), b = poi(0, 0.01)
+        let meters = TravelEstimator.meters(from: a, to: b, mode: .bus)
+        let expected = Int((Double(meters) / (18 * 1000 / 60)).rounded())
+
+        XCTAssertGreaterThan(meters, 0)
+        XCTAssertEqual(TravelEstimator.minutes(from: a, to: b, mode: .bus), expected)
+    }
+
+    func testExplicitModeKeepsNonzeroSegmentAtLeastOneMinute() {
+        let a = poi(0, 0), b = poi(0, 0.000001)
+        XCTAssertEqual(TravelEstimator.minutes(from: a, to: b, mode: .drive), 1)
+    }
 }

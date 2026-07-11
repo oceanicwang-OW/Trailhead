@@ -204,16 +204,16 @@ private extension TripRepository {
             }
             if let previousCandidate {
                 // 段模式与跨水回填统一走 routedSegment（P6.3），与 buildItems 同一逻辑。
-                if let segment = await ItineraryDayBuilder.routedSegment(from: previousCandidate, to: candidate,
-                                                                         source: source, city: city) {
-                    let transit = PlanItem(order: 0, kind: .transit)
-                    transit.transitMode = segment.mode
-                    transit.transitDesc = segment.mode.display
-                    transit.transitMinutes = segment.minutes
-                    transit.transitMeters = segment.meters
-                    transit.transitCost = segment.cost
-                    transitBeforePOI[poi.id] = transit
-                }
+                let segment = await ItineraryDayBuilder.routedSegment(from: previousCandidate, to: candidate,
+                                                                      source: source, city: city)
+                let transit = PlanItem(order: 0, kind: .transit)
+                transit.transitMode = segment.mode
+                transit.transitDesc = segment.mode.display
+                transit.transitMinutes = segment.minutes
+                transit.transitMeters = segment.meters
+                transit.transitCost = segment.cost
+                transit.transitReliability = segment.reliability
+                transitBeforePOI[poi.id] = transit
             }
             previousCandidate = candidate
         }

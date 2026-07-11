@@ -29,11 +29,24 @@ public enum NearbyFood {
             let rest = foods.filter { f in !near.contains { $0.id == f.id } }
             candidates = near.sorted(by: byRating) + rest.sorted(by: byRating)
         }
-        return candidates.prefix(limit).map {
-            FoodOption(id: $0.id, name: $0.name, rating: $0.rating, avgPrice: $0.avgPrice,
-                       subtype: $0.subtype, lat: $0.lat, lng: $0.lng,
-                       tags: $0.tags, photos: $0.photos, openHours: $0.openHours)
+        return candidates.prefix(limit).map { candidate in
+            let distance = coords.map {
+                meters(candidate.lat, candidate.lng, $0.lat, $0.lng)
+            }.min()
+            let roundedDistance = distance.map { Int($0.rounded()) }
+            return FoodOption(id: candidate.id, name: candidate.name, rating: candidate.rating,
+                              avgPrice: candidate.avgPrice, subtype: candidate.subtype,
+                              lat: candidate.lat, lng: candidate.lng,
+                              tags: candidate.tags, photos: candidate.photos, openHours: candidate.openHours,
+                              distanceMeters: roundedDistance,
+                              estimatedMinutes: roundedDistance.map(estimatedMinutes))
         }
+    }
+
+    static func estimatedMinutes(for meters: Int) -> Int {
+        let mode: TransitMode = meters <= 1_500 ? .walk : .drive
+        let routedMeters = Double(meters) * TravelEstimator.circuity(for: mode)
+        return max(1, Int((routedMeters / (TravelEstimator.speedKmh(for: mode) * 1_000 / 60)).rounded()))
     }
 
     static func meters(_ lat1: Double, _ lng1: Double, _ lat2: Double, _ lng2: Double) -> Double {

@@ -1,13 +1,12 @@
 //  SecretStore.swift
-//  API key 解析（按优先级）：环境变量 → 本地文件 ~/.config/trailhead/secrets.json
-//  → Keychain。本地文件方式不弹钥匙串授权框；文件仅本人可读、永不入库。
-//  文件格式：{ "amap": "...", "deepseek": "..." }
+//  API key 解析：正式版本仅使用 Keychain。
+//  DEBUG 构建保留环境变量与 ~/.config/trailhead/secrets.json，方便本地开发和自动化测试；
+//  它们不会成为 Release 构建的密钥来源。
 
 import Foundation
 
 public enum SecretStore {
-    /// 本地机密文件。macOS：~/.config/trailhead/secrets.json（仓库外）；
-    /// iOS：App 容器的 Application Support（沙盒内，通常走 Keychain/设置页而非此文件）。
+    /// 仅 DEBUG 使用的本地开发配置文件。正式版本统一由设置页写入 Keychain。
     public static let defaultFileURL: URL = {
         #if os(macOS)
         return FileManager.default.homeDirectoryForCurrentUser
@@ -16,6 +15,15 @@ public enum SecretStore {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return base.appendingPathComponent("trailhead/secrets.json")
+        #endif
+    }()
+
+    /// Release 必须为 false，防止正式版本从明文文件或进程环境读取 API key。
+    static let developmentSourcesAllowed: Bool = {
+        #if DEBUG
+        true
+        #else
+        false
         #endif
     }()
 
@@ -29,9 +37,12 @@ public enum SecretStore {
 
     static func resolve(envVar: String, fileKey: String, keychainAccount: String,
                         fileURL: URL = defaultFileURL,
-                        environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
-        if let value = environment[envVar], !value.isEmpty { return value }
-        if let value = readFile(at: fileURL)?[fileKey], !value.isEmpty { return value }
+                        environment: [String: String] = ProcessInfo.processInfo.environment,
+                        allowDevelopmentSources: Bool = developmentSourcesAllowed) -> String? {
+        if allowDevelopmentSources {
+            if let value = environment[envVar], !value.isEmpty { return value }
+            if let value = readFile(at: fileURL)?[fileKey], !value.isEmpty { return value }
+        }
         return KeychainStore.get(keychainAccount)
     }
 
@@ -56,6 +67,7 @@ public extension DeepSeekClient {
     static func live(model: String = "deepseek-v4-pro", timeout: TimeInterval = 180) -> DeepSeekClient {
         DeepSeekClient(model: model, timeout: timeout,
                        keyProvider: { SecretStore.deepseekKey() },
-                       onCall: { UsageStore().record(.llm) })
+                       onCall: { UsageStore().record(.llm) },
+                       onUsage: { input, output in UsageStore().recordLLMTokens(input: input, output: output) })
     }
 }

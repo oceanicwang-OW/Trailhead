@@ -6,11 +6,28 @@ import SwiftData
 import SwiftUI
 import TrailheadCore
 
+struct RouteQualitySummary: Equatable {
+    let routePoints: Int
+    let verifiedTransitSegments: Int
+    let estimatedTransitSegments: Int
+
+    init(trip: Trip) {
+        let items = trip.sortedDays.flatMap(\.sortedItems)
+        routePoints = items.filter { $0.kind != .transit }.count
+        let transit = items.filter { $0.kind == .transit }
+        estimatedTransitSegments = transit.filter { $0.transitReliability == .estimated }.count
+        verifiedTransitSegments = transit.count - estimatedTransitSegments
+    }
+
+    var text: String {
+        "\(routePoints) 个路线点 · \(verifiedTransitSegments) 段真实交通 · \(estimatedTransitSegments) 段估算"
+    }
+}
+
 struct RouteTimelineView: View {
     let trip: Trip
     @Binding var selectedDayIndex: Int
-    @Binding var selectedItemID: UUID?
-    @Binding var mapFocus: MapFocus?
+    @ObservedObject var selectionStore: MapSelectionStore
     var gutter: CGFloat = Metric.gutter
     var showDayTabs: Bool = true
     @Environment(\.modelContext) private var modelContext
@@ -25,6 +42,8 @@ struct RouteTimelineView: View {
     @State private var replacementError: String?
     @State private var applyingReplacementItemID: UUID?
     @State private var regeneratingDayID: UUID?
+    @State var showAllFoodOptions = false
+    @State var showAllLodgingOptions = false
 
     private var day: DayPlan? {
         trip.sortedDays.first { $0.dayIndex == selectedDayIndex } ?? trip.sortedDays.first
@@ -34,8 +53,13 @@ struct RouteTimelineView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
+                qualitySummary
                 if showDayTabs { dayTabs.padding(.horizontal, 18).padding(.bottom, 6) }
-                if let day { timeline(for: day); foodSection(for: day) }
+                if let day {
+                    routeSectionLabel
+                    timeline(for: day)
+                    foodSection(for: day)
+                }
                 lodgingSection
             }
             .padding(.bottom, 28)
@@ -51,6 +75,10 @@ struct RouteTimelineView: View {
             if let replacingItem {
                 replacementSheet(for: replacingItem)
             }
+        }
+        .onChange(of: trip.id) {
+            showAllFoodOptions = false
+            showAllLodgingOptions = false
         }
     }
 
@@ -80,6 +108,23 @@ struct RouteTimelineView: View {
         var parts = ["\(f.string(from: day.date)) · \(day.cityLabel)"]
         if !day.theme.isEmpty { parts.append(day.theme) }   // P7 当天主题（未生成则不显示）
         return parts.joined(separator: " · ")
+    }
+
+    private var qualitySummary: some View {
+        let summary = RouteQualitySummary(trip: trip)
+        return HStack(spacing: 7) {
+            Image(systemName: summary.estimatedTransitSegments == 0
+                  ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(summary.estimatedTransitSegments == 0 ? Palette.green : Palette.orange)
+            Text(summary.text)
+                .font(Typo.caption)
+                .foregroundStyle(Palette.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 10)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("行程质量摘要，\(summary.text)")
     }
 
     private var dayTabs: some View {
@@ -162,14 +207,24 @@ struct RouteTimelineView: View {
         .padding(.top, 4)
     }
 
+    private var routeSectionLabel: some View {
+        Label("路线内停留 · 已排程", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Palette.green)
+            .padding(.horizontal, 18)
+            .padding(.top, 4)
+            .accessibilityLabel("路线内停留，以下地点已经排入当天行程")
+    }
+
     private var editControls: some View {
         HStack(spacing: 6) {
-            editControlButton(systemName: "xmark", tint: Palette.textMuted) {
+            editControlButton(systemName: "xmark", accessibilityLabel: "取消编辑", tint: Palette.textMuted) {
                 cancelEditing()
             }
             .help("取消")
 
-            editControlButton(systemName: "checkmark", tint: .white, background: Palette.green) {
+            editControlButton(systemName: "checkmark", accessibilityLabel: "保存编辑",
+                              tint: .white, background: Palette.green) {
                 if let day { saveEditing(day) }
             }
             .help("保存")
@@ -179,10 +234,14 @@ struct RouteTimelineView: View {
 
     private func editablePOIRow(_ item: PlanItem, day: DayPlan) -> some View {
         POICard(item: item,
-                selected: selectedItemID == item.id,
+                selected: selectionStore.selection?.itineraryID == item.id,
                 gutter: gutter)
             .contentShape(Rectangle())
-            .onTapGesture { selectedItemID = item.id }
+            .onTapGesture { selectionStore.selection = .itinerary(item.id) }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("在地图查看路线地点：\(item.name ?? item.kind.label)")
+            .accessibilityAction { selectionStore.selection = .itinerary(item.id) }
             .overlay(alignment: .topTrailing) {
                 if isEditing {
                     moveControls(for: item, day: day)
@@ -195,19 +254,20 @@ struct RouteTimelineView: View {
     private func moveControls(for item: PlanItem, day: DayPlan) -> some View {
         let index = poiIndex(for: item, day: day)
         return HStack(spacing: 4) {
-            moveButton(systemName: "chevron.up",
+            moveButton(systemName: "chevron.up", accessibilityLabel: "上移地点",
                        disabled: index == nil || index == 0) {
                 movePOI(item.id, offset: -1, day: day)
             }
             .help("上移")
 
-            moveButton(systemName: "chevron.down",
+            moveButton(systemName: "chevron.down", accessibilityLabel: "下移地点",
                        disabled: index == nil || index == poiIDs(for: day).count - 1) {
                 movePOI(item.id, offset: 1, day: day)
             }
             .help("下移")
 
             moveButton(systemName: applyingReplacementItemID == item.id ? "hourglass" : "arrow.triangle.2.circlepath",
+                       accessibilityLabel: "替换地点",
                        tint: Palette.green,
                        disabled: deletingItemID != nil
                            || applyingReplacementItemID != nil
@@ -217,6 +277,7 @@ struct RouteTimelineView: View {
             .help("替换")
 
             moveButton(systemName: deletingItemID == item.id ? "hourglass" : "trash",
+                       accessibilityLabel: "删除地点",
                        tint: .red,
                        disabled: deletingItemID != nil
                            || applyingReplacementItemID != nil
@@ -230,6 +291,7 @@ struct RouteTimelineView: View {
     }
 
     private func editControlButton(systemName: String,
+                                   accessibilityLabel: String,
                                    tint: Color,
                                    background: Color = Palette.fieldBG,
                                    action: @escaping () -> Void) -> some View {
@@ -241,9 +303,11 @@ struct RouteTimelineView: View {
                 .background(background, in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
     }
 
     private func moveButton(systemName: String,
+                            accessibilityLabel: String,
                             tint: Color = Palette.green,
                             disabled: Bool,
                             action: @escaping () -> Void) -> some View {
@@ -251,11 +315,12 @@ struct RouteTimelineView: View {
             Image(systemName: systemName)
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(disabled ? Palette.textMuted.opacity(0.35) : tint)
-                .frame(width: 24, height: 24)
+                .frame(width: Metric.minimumControlTarget, height: Metric.minimumControlTarget)
                 .background(Palette.canvasBG.opacity(0.82), in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
         .disabled(disabled)
+        .accessibilityLabel(accessibilityLabel)
     }
 
     private var editErrorPresented: Binding<Bool> {
@@ -291,6 +356,7 @@ struct RouteTimelineView: View {
         }
         withAnimation(.snappy) {
             selectedDayIndex = dayIndex
+            showAllFoodOptions = false
         }
     }
 
@@ -411,7 +477,7 @@ private extension RouteTimelineView {
                 try repo.reorderPOIs(day, orderedPOIIDs: currentIDs)
                 try await repo.replacePOI(item, with: candidate, in: day, routeUsing: AmapClient.live(), adcode: trip.adcode)
                 draftPOIIDs = currentIDs
-                selectedItemID = item.id
+                selectionStore.selection = .itinerary(item.id)
                 replacingItem = nil
                 applyingReplacementItemID = nil
             } catch {
@@ -431,8 +497,8 @@ private extension RouteTimelineView {
                 try repo.reorderPOIs(day, orderedPOIIDs: currentIDs)
                 try await repo.deletePOI(item, from: day, routeUsing: AmapClient.live(), adcode: trip.adcode)
                 draftPOIIDs = currentIDs.filter { $0 != item.id }
-                if selectedItemID == item.id {
-                    selectedItemID = draftPOIIDs.first
+                if selectionStore.selection?.itineraryID == item.id {
+                    selectionStore.selection = draftPOIIDs.first.map(MapSelection.itinerary)
                 }
                 deletingItemID = nil
             } catch {
@@ -452,7 +518,7 @@ private extension RouteTimelineView {
                 try await TripRepository(context: modelContext).regenerateDay(day, in: trip,
                                                                               source: AmapClient.live(),
                                                                               llm: DeepSeekClient.live())
-                selectedItemID = day.sortedItems.first { $0.kind != .transit }?.id
+                selectionStore.selection = day.sortedItems.first { $0.kind != .transit }.map { .itinerary($0.id) }
                 regeneratingDayID = nil
             } catch {
                 editError = error.localizedDescription

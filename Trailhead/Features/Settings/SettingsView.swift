@@ -5,12 +5,20 @@
 import SwiftData
 import SwiftUI
 import TrailheadCore
+#if os(macOS)
+import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var keys = APIKeySettingsViewModel()
     @State private var amapToday = 0
     @State private var llmToday = 0
+    @State private var llmInputTokens = 0
+    @State private var llmOutputTokens = 0
+    @State private var lastDiagnostics: GenerationDiagnostics?
     /// 软性日预算（仅用于进度条参照；高德个人免费配额按接口分别计，非硬上限）。
     private let dailyBudget = 5000
 
@@ -24,6 +32,8 @@ struct SettingsView: View {
         let usage = UsageStore()
         amapToday = usage.count(.amap)
         llmToday = usage.count(.llm)
+        llmInputTokens = usage.llmInputTokens()
+        llmOutputTokens = usage.llmOutputTokens()
     }
 
     private func reloadStorage() {
@@ -56,7 +66,10 @@ struct SettingsView: View {
                         placeholder: keys.hasAmapKey ? "输入新 key 以覆盖" : "粘贴高德 Web 服务 key",
                         save: keys.saveAmapKey,
                         delete: keys.deleteAmapKey,
-                        canDelete: keys.hasAmapKey
+                        canDelete: keys.hasAmapKey,
+                        test: { Task { await keys.testAmapConnection() } },
+                        isTesting: keys.amapIsTesting,
+                        validationFailed: keys.amapValidationFailed
                     )
                     Divider().padding(.leading, 15)
                     keyRow(
@@ -66,7 +79,10 @@ struct SettingsView: View {
                         placeholder: keys.hasDeepSeekKey ? "输入新 key 以覆盖" : "粘贴 DeepSeek API key",
                         save: keys.saveDeepSeekKey,
                         delete: keys.deleteDeepSeekKey,
-                        canDelete: keys.hasDeepSeekKey
+                        canDelete: keys.hasDeepSeekKey,
+                        test: { Task { await keys.testDeepSeekConnection() } },
+                        isTesting: keys.deepSeekIsTesting,
+                        validationFailed: keys.deepSeekValidationFailed
                     )
                 }
 
@@ -84,6 +100,12 @@ struct SettingsView: View {
                             Text("DeepSeek 生成").font(Typo.caption).foregroundStyle(Palette.textSecondary)
                             Spacer()
                             Text("\(llmToday) 次").font(Typo.caption).foregroundStyle(Palette.textSecondary)
+                        }
+                        HStack(spacing: 0) {
+                            Text("Token 输入 / 输出").font(Typo.caption2).foregroundStyle(Palette.textSecondary)
+                            Spacer()
+                            Text("\(llmInputTokens) / \(llmOutputTokens)")
+                                .font(Typo.mono).foregroundStyle(Palette.textSecondary)
                         }
                         Text("本地计数 · 次日 0 点自动归零")
                             .font(Typo.caption2).foregroundStyle(Palette.textTertiary)
@@ -108,11 +130,33 @@ struct SettingsView: View {
                     Divider().padding(.leading, 15)
                     destructiveRow("清除全部数据", trailing: "行程 + 缓存") { confirmClearAll = true }
                 }
+
+                #if DEBUG
+                group("开发诊断 · 已脱敏") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(lastDiagnostics?.redactedSummary ?? "还没有生成诊断")
+                            .font(Typo.mono)
+                            .foregroundStyle(Palette.textSecondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button("复制诊断摘要") { copyDiagnostics() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(lastDiagnostics == nil)
+                    }
+                    .padding(.horizontal, 15).padding(.vertical, 12)
+                }
+                #endif
             }
             .padding(26)
         }
         .background(Palette.groupedBG)
-        .onAppear { keys.load(); reloadUsage(); reloadStorage() }
+        .onAppear {
+            keys.load()
+            reloadUsage()
+            reloadStorage()
+            lastDiagnostics = GenerationDiagnosticsStore().load()
+        }
         .alert("清除 POI 缓存？", isPresented: $confirmClearCache) {
             Button("清除", role: .destructive) { clearCache() }
             Button("取消", role: .cancel) {}
@@ -121,6 +165,14 @@ struct SettingsView: View {
             Button("清除全部", role: .destructive) { clearAllData() }
             Button("取消", role: .cancel) {}
         } message: { Text("删除所有行程与缓存，不可恢复。") }
+        .alert("钥匙串操作失败", isPresented: Binding(
+            get: { keys.operationError != nil },
+            set: { if !$0 { keys.clearOperationError() } }
+        )) {
+            Button("好", role: .cancel) { keys.clearOperationError() }
+        } message: {
+            Text(keys.operationError ?? "请稍后重试")
+        }
     }
 
     private func destructiveRow(_ title: String, trailing: String, action: @escaping () -> Void) -> some View {
@@ -151,14 +203,19 @@ struct SettingsView: View {
         }.padding(.horizontal, 15).padding(.vertical, 11)
     }
 
+    // swiftlint:disable:next function_parameter_count
     private func keyRow(title: String, status: String, draft: Binding<String>,
                         placeholder: String, save: @escaping () -> Void,
-                        delete: @escaping () -> Void, canDelete: Bool) -> some View {
+                        delete: @escaping () -> Void, canDelete: Bool,
+                        test: @escaping () -> Void, isTesting: Bool,
+                        validationFailed: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(Typo.body).foregroundStyle(Palette.textPrimary)
-                    Text(status).font(Typo.caption2).foregroundStyle(canDelete ? Palette.green : Palette.textTertiary)
+                    Text(status).font(Typo.caption2)
+                        .foregroundStyle(validationFailed ? Palette.red
+                            : (canDelete ? Palette.green : Palette.textTertiary))
                 }
                 Spacer()
                 if canDelete {
@@ -181,10 +238,31 @@ struct SettingsView: View {
                     .background(Palette.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
                     .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .opacity(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
+                Button(action: test) {
+                    Group {
+                        if isTesting { ProgressView().controlSize(.small) } else { Text("测试连接") }
+                    }
+                    .frame(minWidth: 54)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isTesting || (!canDelete
+                    && draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                .accessibilityLabel("测试 \(title) 连接")
             }
         }
         .padding(.horizontal, 15)
         .padding(.vertical, 12)
+    }
+
+    private func copyDiagnostics() {
+        guard let summary = lastDiagnostics?.redactedSummary else { return }
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(summary, forType: .string)
+        #elseif os(iOS)
+        UIPasteboard.general.string = summary
+        #endif
     }
 
     private func pill(_ text: String, tint: Color? = nil) -> some View {

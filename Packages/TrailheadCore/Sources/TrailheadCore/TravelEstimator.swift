@@ -34,9 +34,22 @@ public enum TravelEstimator {
     /// 估算两点间行段用时（分钟，四舍五入）。`city` 为城市 adcode（决定远途走公交/驾车）。
     public static func minutes(from: POICandidate, to: POICandidate, city: String) -> Int {
         let mode = ItineraryDayBuilder.mode(from: from, to: to, city: city)
-        let meters = ItineraryDayBuilder.haversineMeters(from, to) * circuity(for: mode)
+        return minutes(from: from, to: to, mode: mode)
+    }
+
+    /// 指定模式的估算路网距离，供真实路线失败时展示兜底交通段。
+    public static func meters(from: POICandidate, to: POICandidate, mode: TransitMode) -> Int {
+        let estimate = ItineraryDayBuilder.haversineMeters(from, to) * circuity(for: mode)
+        guard estimate > 0 else { return 0 }
+        return max(1, Int(estimate.rounded()))
+    }
+
+    /// 指定模式的估算用时；同点保持 0，非零距离至少显示 1 分钟。
+    public static func minutes(from: POICandidate, to: POICandidate, mode: TransitMode) -> Int {
+        let meters = Double(meters(from: from, to: to, mode: mode))
         let metersPerMinute = speedKmh(for: mode) * 1000 / 60
         guard metersPerMinute > 0 else { return 0 }
-        return Int((meters / metersPerMinute).rounded())
+        guard meters > 0 else { return 0 }
+        return max(1, Int((meters / metersPerMinute).rounded()))
     }
 }

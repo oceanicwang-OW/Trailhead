@@ -253,7 +253,7 @@ final class TripRepositoryTests: XCTestCase {
         XCTAssertEqual(source.routeCalls.map { "\($0.from)-\($0.to)" }, ["A-X", "X-C"])
     }
 
-    func testReplacePOISkipsFailedRouteSegmentAndStillSaves() async throws {
+    func testReplacePOIEstimatesFailedRouteSegmentAndStillSaves() async throws {
         let ctx = try TestSupport.makeContext()
         let repo = TripRepository(context: ctx)
         let source = RouteSpySource()
@@ -271,8 +271,10 @@ final class TripRepositoryTests: XCTestCase {
         try await repo.replacePOI(b, with: replacement, in: day, routeUsing: source)
 
         let sorted = day.sortedItems
-        XCTAssertEqual(sorted.map(\.kind), [.sight, .food, .transit, .sight])
-        XCTAssertEqual(sorted.map(\.name), ["A", "X Cafe", nil, "C"])
+        XCTAssertEqual(sorted.map(\.kind), [.sight, .transit, .food, .transit, .sight])
+        XCTAssertEqual(sorted.map(\.name), ["A", nil, "X Cafe", nil, "C"])
+        XCTAssertEqual(sorted.filter { $0.kind == .transit }.map(\.transitReliability),
+                       [.estimated, .verified])
         XCTAssertEqual(source.routeCalls.map { "\($0.from)-\($0.to)" }, ["A-X", "X-C"])
     }
 

@@ -27,6 +27,22 @@ struct TrailheadApp: App {
         #if os(macOS)
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                SettingsLink {
+                    Text("设置…")
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+        }
+        #endif
+
+        #if os(macOS)
+        Settings {
+            SettingsView()
+                .frame(width: 560, height: 700)
+        }
+        .modelContainer(container)
         #endif
     }
 }

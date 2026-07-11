@@ -159,10 +159,23 @@ struct TransportRow: View {
                 TransitNode(systemImage: icon)
                     .frame(maxHeight: .infinity)        // vertically centered on spine
             }
-            Text(item.transitLine)
-                .font(Typo.caption2)
-                .foregroundStyle(Palette.textMuted)
-                .padding(.vertical, 4)
+            HStack(spacing: 6) {
+                Text(item.transitLine)
+                    .font(Typo.caption2)
+                    .foregroundStyle(Palette.textMuted)
+                if item.transitReliability == .estimated {
+                    Text("估算 · 待校准")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.12), in: Capsule())
+                }
+            }
+            .padding(.vertical, 4)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(item.transitReliability == .estimated
+                ? "\(item.transitLine)，估算，待联网校准"
+                : item.transitLine)
             Spacer(minLength: 0)
         }
         .padding(.top, -6)   // tuck under the previous card (mockup uses margin-top:-6)

@@ -87,7 +87,7 @@ Trailhead/
 ## 开发规范
 
 - **代码规范**：[`docs/CODE_STYLE.md`](docs/CODE_STYLE.md)。提交前 `swiftformat . && make lint`，CI 同样校验。
-- **机密**：API key 一律走 Keychain，严禁硬编码/落库；`make hooks` 启用提交前拦截。
+- **机密**：Release 构建的 API key 一律走 Keychain，严禁硬编码/落库；Debug 构建可从环境变量或仓库外的 `~/.config/trailhead/secrets.json` 读取本地开发 key。`make hooks` 启用提交前拦截。
 - **改工程配置**：改 `project.yml` 后 `xcodegen generate`，不要手改 `.pbxproj`。
 
 ## 近期更新（推荐质量 · 个性化 · 交互）

@@ -11,6 +11,7 @@ private final class MockSource: POIDataSource {
     var adcode = "110100"
     var byTag: [String: [POICandidate]] = [:]
     var routeResult: (minutes: Int, meters: Int, cost: Int?) = (15, 1200, nil)
+    var routesFail = false
     private(set) var routeCalls = 0
     private(set) var lastRouteCity: String?
 
@@ -26,6 +27,7 @@ private final class MockSource: POIDataSource {
                mode: TransitMode, city: String) async throws -> (minutes: Int, meters: Int, cost: Int?) {
         routeCalls += 1
         lastRouteCity = city
+        if routesFail { throw URLError(.notConnectedToInternet) }
         return routeResult
     }
 }
@@ -134,6 +136,26 @@ final class ItineraryEngineTests: XCTestCase {
     }
 
     @MainActor
+    func testFailedRoutesRemainContinuousAndAreReportedAsEstimated() async throws {
+        let ctx = try TestSupport.makeContext()
+        let source = MockSource()
+        source.routesFail = true
+        source.byTag = ["景点": [cand("A", lng: 116.400), cand("B", lng: 116.405),
+                              cand("C", lng: 116.410)]]
+        let engine = ItineraryEngine(source: source, llm: MockLLM(["{}"]), context: ctx)
+
+        let trip = try await engine.generate(destination: "北京", prefs: TripPrefs(tags: ["景点"]), days: 1)
+        let transit = trip.sortedDays[0].sortedItems.filter { $0.kind == .transit }
+
+        XCTAssertEqual(transit.count, 2)
+        XCTAssertTrue(transit.allSatisfy { $0.transitReliability == .estimated })
+        XCTAssertEqual(engine.diagnostics.transitSegments, 2)
+        XCTAssertEqual(engine.diagnostics.verifiedTransitSegments, 0)
+        XCTAssertEqual(engine.diagnostics.estimatedTransitSegments, 2)
+        XCTAssertTrue(engine.diagnostics.warnings.contains { $0.contains("2 段交通使用估算时间") })
+    }
+
+    @MainActor
     func testLodgingSplitOutOfItineraryIntoShortlist() async throws {
         let ctx = try TestSupport.makeContext()
         let source = MockSource()
@@ -168,5 +190,28 @@ final class ItineraryEngineTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? ItineraryEngine.EngineError, .noCandidates)
         }
+    }
+
+    func testDiagnosticsSummaryIsRedactedAndRoundTrips() throws {
+        var diagnostics = GenerationDiagnostics()
+        diagnostics.recalledCandidates = 12
+        diagnostics.curatedCandidates = 6
+        diagnostics.finalStops = 4
+        diagnostics.verifiedTransitSegments = 2
+        diagnostics.estimatedTransitSegments = 1
+        diagnostics.llmInputTokens = 300
+        diagnostics.llmOutputTokens = 80
+        diagnostics.stageDurationsMs = ["routing": 25]
+        diagnostics.warnings = ["有 1 段交通使用估算时间"]
+        let suite = "diagnostics-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = GenerationDiagnosticsStore(defaults: defaults)
+
+        store.save(diagnostics)
+
+        XCTAssertEqual(store.load(), diagnostics)
+        XCTAssertTrue(diagnostics.redactedSummary.contains("Token：输入 300 / 输出 80"))
+        XCTAssertFalse(diagnostics.redactedSummary.lowercased().contains("key"))
     }
 }

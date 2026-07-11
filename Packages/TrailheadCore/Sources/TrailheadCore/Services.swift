@@ -12,19 +12,40 @@ import Security
 
 // MARK: - KeychainStore (PDR T1.3, real)
 
+public enum KeychainStoreError: Error, Equatable, LocalizedError {
+    case operationFailed(operation: String, status: Int32)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .operationFailed(operation, status):
+            return "钥匙串\(operation)失败（状态码 \(status)）"
+        }
+    }
+}
+
 public enum KeychainStore {
     private static let service = "app.trailhead.keys"
 
-    public static func set(_ value: String, for account: String) {
+    public static func set(_ value: String, for account: String) throws {
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(query as CFDictionary)
-        var add = query; add[kSecValueData as String] = data
-        SecItemAdd(add as CFDictionary, nil)
+        let updateStatus = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if updateStatus == errSecSuccess { return }
+        guard updateStatus == errSecItemNotFound else {
+            throw KeychainStoreError.operationFailed(operation: "更新", status: updateStatus)
+        }
+        var add = query
+        add[kSecValueData as String] = data
+        // API key 仅在本机解锁后可读，不参与 iCloud Keychain 同步或设备间迁移。
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        let addStatus = SecItemAdd(add as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            throw KeychainStoreError.operationFailed(operation: "保存", status: addStatus)
+        }
     }
 
     public static func get(_ account: String) -> String? {
@@ -41,13 +62,16 @@ public enum KeychainStore {
         return String(data: data, encoding: .utf8)
     }
 
-    public static func delete(_ account: String) {
+    public static func delete(_ account: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainStoreError.operationFailed(operation: "删除", status: status)
+        }
     }
 
     public enum Account { public static let amap = "amap_web_key"; public static let llm = "llm_api_key" }

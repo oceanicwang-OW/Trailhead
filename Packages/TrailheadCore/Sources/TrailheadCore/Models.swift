@@ -38,6 +38,11 @@ public enum TransitMode: String, Codable, Sendable {
     }
 }
 
+public enum TransitReliability: String, Codable, Sendable {
+    case verified
+    case estimated
+}
+
 public enum Pace: String, Codable, CaseIterable, Sendable {
     case tight, relaxed, casual
     public var display: String {
@@ -98,16 +103,23 @@ public struct FoodOption: Codable, Hashable, Sendable, Identifiable {
     public var tags: [String]      // 推荐菜/特色标签（高德 business.tag/rectag）
     public var photos: [String]    // 图片 URL
     public var openHours: String?
+    public var distanceMeters: Int?    // 距当天路线最近点
+    public var estimatedMinutes: Int?  // 从路线最近点出发的粗略用时
 
     public init(id: String, name: String, rating: Double? = nil, avgPrice: Int? = nil,
                 subtype: String = "", lat: Double, lng: Double,
-                tags: [String] = [], photos: [String] = [], openHours: String? = nil) {
+                tags: [String] = [], photos: [String] = [], openHours: String? = nil,
+                distanceMeters: Int? = nil, estimatedMinutes: Int? = nil) {
         self.id = id; self.name = name; self.rating = rating
         self.avgPrice = avgPrice; self.subtype = subtype; self.lat = lat; self.lng = lng
         self.tags = tags; self.photos = photos; self.openHours = openHours
+        self.distanceMeters = distanceMeters; self.estimatedMinutes = estimatedMinutes
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, rating, avgPrice, subtype, lat, lng, tags, photos, openHours }
+    enum CodingKeys: String, CodingKey {
+        case id, name, rating, avgPrice, subtype, lat, lng, tags, photos, openHours
+        case distanceMeters, estimatedMinutes
+    }
 
     /// 容错解码：老数据没有新字段，缺失取默认，不丢整份清单（同 TripPrefs 先例）。
     public init(from decoder: Decoder) throws {
@@ -122,6 +134,8 @@ public struct FoodOption: Codable, Hashable, Sendable, Identifiable {
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         photos = try c.decodeIfPresent([String].self, forKey: .photos) ?? []
         openHours = try c.decodeIfPresent(String.self, forKey: .openHours)
+        distanceMeters = try c.decodeIfPresent(Int.self, forKey: .distanceMeters)
+        estimatedMinutes = try c.decodeIfPresent(Int.self, forKey: .estimatedMinutes)
     }
 }
 
@@ -137,16 +151,22 @@ public struct LodgingOption: Codable, Hashable, Sendable, Identifiable {
     public var lng: Double
     public var tags: [String]      // 环境/服务标签，如「免费停车」「近地铁」
     public var photos: [String]    // 图片 URL
+    public var distanceMeters: Int?    // 距整趟路线最近点
+    public var estimatedMinutes: Int?  // 驾车粗略用时
 
     public init(id: String, name: String, rating: Double? = nil,
                 avgPrice: Int? = nil, lat: Double, lng: Double,
-                tags: [String] = [], photos: [String] = []) {
+                tags: [String] = [], photos: [String] = [],
+                distanceMeters: Int? = nil, estimatedMinutes: Int? = nil) {
         self.id = id; self.name = name; self.rating = rating
         self.avgPrice = avgPrice; self.lat = lat; self.lng = lng
         self.tags = tags; self.photos = photos
+        self.distanceMeters = distanceMeters; self.estimatedMinutes = estimatedMinutes
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, rating, avgPrice, lat, lng, tags, photos }
+    enum CodingKeys: String, CodingKey {
+        case id, name, rating, avgPrice, lat, lng, tags, photos, distanceMeters, estimatedMinutes
+    }
 
     /// 容错解码：老数据没有新字段，缺失取默认（同 TripPrefs 先例）。
     public init(from decoder: Decoder) throws {
@@ -159,6 +179,8 @@ public struct LodgingOption: Codable, Hashable, Sendable, Identifiable {
         lng = try c.decode(Double.self, forKey: .lng)
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         photos = try c.decodeIfPresent([String].self, forKey: .photos) ?? []
+        distanceMeters = try c.decodeIfPresent(Int.self, forKey: .distanceMeters)
+        estimatedMinutes = try c.decodeIfPresent(Int.self, forKey: .estimatedMinutes)
     }
 }
 
@@ -257,6 +279,7 @@ public final class PlanItem {
     public var transitMinutes: Int?
     public var transitMeters: Int?
     public var transitCost: Int?         // 本地货币最小单位的整数显示值
+    public var transitReliabilityRaw: String?
 
     public init(id: UUID = UUID(), order: Int, kind: ItemKind) {
         self.id = id; self.order = order; self.kindRaw = kind.rawValue
@@ -269,6 +292,10 @@ public final class PlanItem {
     public var transitMode: TransitMode? {
         get { transitModeRaw.flatMap(TransitMode.init) }
         set { transitModeRaw = newValue?.rawValue }
+    }
+    public var transitReliability: TransitReliability {
+        get { transitReliabilityRaw.flatMap(TransitReliability.init) ?? .verified }
+        set { transitReliabilityRaw = newValue.rawValue }
     }
 
     /// "JR 奈良线 + 步行 · 18 分钟 · 4.2 km · ¥150"
@@ -301,6 +328,7 @@ extension PlanItem {
         let i = PlanItem(order: order, kind: .transit)
         i.transitMode = mode; i.transitDesc = desc
         i.transitMinutes = minutes; i.transitMeters = meters; i.transitCost = cost
+        i.transitReliability = .verified
         return i
     }
 }

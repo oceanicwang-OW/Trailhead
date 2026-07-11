@@ -30,6 +30,19 @@ final class DeepSeekClientTests: XCTestCase {
         XCTAssertEqual(out, "{\"days\":[]}")
     }
 
+    func testReportsTokenUsageWithoutExposingContent() async throws {
+        MockURLProtocol.stub(#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":12,"completion_tokens":3}}"#)
+        var received: (Int, Int)?
+        let client = DeepSeekClient(maxRetries: 0, session: TestSupport.mockSession(),
+                                    keyProvider: { "TESTKEY" },
+                                    onUsage: { received = ($0, $1) })
+
+        _ = try await client.complete(messages: [ChatMessage(.user, "secret prompt")], jsonMode: false)
+
+        XCTAssertEqual(received?.0, 12)
+        XCTAssertEqual(received?.1, 3)
+    }
+
     func testRequestShapeAndJSONMode() async throws {
         MockURLProtocol.stub(completion("ok"))
         _ = try await makeClient().complete(

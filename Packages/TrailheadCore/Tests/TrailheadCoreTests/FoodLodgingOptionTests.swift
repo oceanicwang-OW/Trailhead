@@ -71,4 +71,59 @@ final class FoodLodgingOptionTests: XCTestCase {
 
         XCTAssertEqual(out.first?.id, "affordable")
     }
+
+    @MainActor
+    func testLodgingShortlistFiltersRemoteSubcitiesAroundFinalRoute() {
+        let downtown = POICandidate(id: "downtown", name: "苏州市区酒店", kind: .lodging,
+                                    subtype: "舒适型", lat: 31.31, lng: 120.62, rating: 4.6,
+                                    avgPrice: 360)
+        let kunshan = POICandidate(id: "kunshan", name: "昆山酒店", kind: .lodging,
+                                   subtype: "舒适型", lat: 31.39, lng: 120.98, rating: 4.9,
+                                   avgPrice: 320)
+        let zhangjiagang = POICandidate(id: "zhangjiagang", name: "张家港酒店", kind: .lodging,
+                                        subtype: "豪华型", lat: 31.86, lng: 120.54, rating: 5.0,
+                                        avgPrice: 500)
+
+        let out = ItineraryEngine.lodgingShortlist(
+            from: [zhangjiagang, kunshan, downtown], prefs: TripPrefs(),
+            routeCoords: [(31.30, 120.60), (31.32, 120.64)]
+        )
+
+        XCTAssertEqual(out.map(\.id), ["downtown"])
+        XCTAssertNotNil(out.first?.distanceMeters)
+        XCTAssertNotNil(out.first?.estimatedMinutes)
+    }
+
+    @MainActor
+    func testNamedRemoteLodgingIsExemptFromDistanceFilter() {
+        let remote = POICandidate(id: "remote", name: "张家港指定酒店", kind: .lodging,
+                                  subtype: "酒店", lat: 31.86, lng: 120.54, rating: 4.5)
+
+        let out = ItineraryEngine.lodgingShortlist(
+            from: [remote], prefs: TripPrefs(freeText: "想住张家港指定酒店"),
+            routeCoords: [(31.30, 120.60)]
+        )
+
+        XCTAssertEqual(out.map(\.id), ["remote"])
+    }
+
+    @MainActor
+    func testLodgingShortlistFirstThreeCoverAvailablePriceBands() {
+        let pool = [
+            POICandidate(id: "mid1", name: "中档一", kind: .lodging, subtype: "舒适型",
+                         lat: 31.301, lng: 120.601, rating: 4.9, avgPrice: 420),
+            POICandidate(id: "mid2", name: "中档二", kind: .lodging, subtype: "舒适型",
+                         lat: 31.302, lng: 120.602, rating: 4.8, avgPrice: 450),
+            POICandidate(id: "low", name: "经济型", kind: .lodging, subtype: "经济型",
+                         lat: 31.305, lng: 120.605, rating: 4.6, avgPrice: 180),
+            POICandidate(id: "high", name: "高档型", kind: .lodging, subtype: "豪华型",
+                         lat: 31.306, lng: 120.606, rating: 4.7, avgPrice: 780),
+        ]
+
+        let out = ItineraryEngine.lodgingShortlist(
+            from: pool, prefs: TripPrefs(budgetPerDay: 800), routeCoords: [(31.30, 120.60)]
+        )
+
+        XCTAssertEqual(Set(out.prefix(3).map(\.id)), ["mid1", "low", "high"])
+    }
 }
