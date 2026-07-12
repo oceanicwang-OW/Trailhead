@@ -1,5 +1,5 @@
-import TrailheadCore
 @testable import Trailhead
+import TrailheadCore
 import XCTest
 
 final class MapSelectionTests: XCTestCase {
