@@ -48,6 +48,7 @@ struct GeneratingView: View {
 
             Button(action: onCancel) {
                 Text("取消生成").font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.red)
+                    .frame(minHeight: Metric.minimumControlTarget)
             }.buttonStyle(.plain).padding(.top, 20).padding(.bottom, 30)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -70,6 +71,9 @@ struct GeneratingView: View {
                     .font(Typo.caption).foregroundStyle(Palette.textSecondary)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("生成进度")
+        .accessibilityValue("百分之 \(Int(progress * 100))，已规划 \(plannedDays) 天，共 \(totalDays) 天")
     }
 
     private var stepList: some View {
@@ -86,6 +90,8 @@ struct GeneratingView: View {
                     case .pending: EmptyView()
                     }
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(step.title)，\(stateLabel(step.state))")
                 .padding(.vertical, 11).padding(.horizontal, 14)
                 if idx < steps.count - 1 {
                     Divider().padding(.leading, 51)
@@ -108,6 +114,14 @@ struct GeneratingView: View {
             case .pending:
                 Circle().stroke(Palette.separator, lineWidth: 2).frame(width: 24, height: 24)
             }
+        }
+    }
+
+    private func stateLabel(_ state: Step.State) -> String {
+        switch state {
+        case .done: return "已完成"
+        case .active: return "进行中"
+        case .pending: return "等待中"
         }
     }
 }

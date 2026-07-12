@@ -18,7 +18,8 @@ public struct POIRecall {
     /// 再按 tags 分类召回。每个维度（kw:<词> 或 tag）独立缓存，命中即省网络调用。
     /// @MainActor：缓存读写走 ModelContext，须在主线程；网络调用经 await 仍在后台。
     @MainActor
-    public func recall(adcode: String, tags: [String], freeText: String = "", now: Date = .now) async throws -> [POICandidate] {
+    public func recall(adcode: String, tags: [String], freeText: String = "", now: Date = .now,
+                       onCacheLookup: ((Bool) -> Void)? = nil) async throws -> [POICandidate] {
         var seen = Set<String>()
         var out: [POICandidate] = []
         var firstError: Error?
@@ -26,7 +27,8 @@ public struct POIRecall {
         // ① freeText 关键词命中：用户点名的具体地点优先进池。
         for keyword in POIKeywordExtractor.keywords(from: freeText) {
             do {
-                let hits = try await fetchCached(adcode: adcode, category: "kw:\(keyword)", now: now) {
+                let hits = try await fetchCached(adcode: adcode, category: "kw:\(keyword)", now: now,
+                                                 onCacheLookup: onCacheLookup) {
                     try await source.searchPOI(keywords: keyword, adcode: adcode)
                 }
                 append(hits, into: &out, seen: &seen)
@@ -39,7 +41,8 @@ public struct POIRecall {
         let categories = tags.isEmpty ? ["景点"] : Array(Set(tags)).sorted()
         for tag in categories {
             do {
-                let candidates = try await fetchCached(adcode: adcode, category: tag, now: now) {
+                let candidates = try await fetchCached(adcode: adcode, category: tag, now: now,
+                                                       onCacheLookup: onCacheLookup) {
                     try await source.searchPOI(adcode: adcode, tags: [tag])
                 }
                 append(candidates, into: &out, seen: &seen)
@@ -54,8 +57,13 @@ public struct POIRecall {
     /// 命中未过期缓存 → 直接用；否则回源并写回缓存。
     @MainActor
     private func fetchCached(adcode: String, category: String, now: Date,
+                             onCacheLookup: ((Bool) -> Void)?,
                              fetch: () async throws -> [POICandidate]) async throws -> [POICandidate] {
-        if let cached = try cache.fetch(adcode: adcode, category: category, now: now) { return cached }
+        if let cached = try cache.fetch(adcode: adcode, category: category, now: now) {
+            onCacheLookup?(true)
+            return cached
+        }
+        onCacheLookup?(false)
         let fresh = try await fetch()
         try cache.store(fresh, adcode: adcode, category: category, at: now)
         return fresh

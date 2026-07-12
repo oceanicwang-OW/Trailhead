@@ -60,9 +60,9 @@ enum Palette {
 
     // Text
     static let textPrimary   = Color(light: Color(hex: 0x1D1D1F), dark: Color(hex: 0xF5F5F7))
-    static let textSecondary = Color(hex: 0x8E8E93)
-    static let textTertiary  = Color(hex: 0xA1A1A6)
-    static let textMuted     = Color(hex: 0x86868B)
+    static let textSecondary = Color(light: Color(hex: 0x5F6368), dark: Color(hex: 0xB0B0B5))
+    static let textTertiary  = Color(light: Color(hex: 0x6E6E73), dark: Color(hex: 0xA1A1A6))
+    static let textMuted     = Color(light: Color(hex: 0x62666B), dark: Color(hex: 0xAEAEB2))
 
     // Hairlines
     static let separator = Color(light: Color(hex: 0x000000, alpha: 0.10),
@@ -104,4 +104,10 @@ enum Metric {
     static let spineWidth: CGFloat = 3
     static let gutter:    CGFloat = 64
     static let gutterCompact: CGFloat = 50
+
+    #if os(iOS)
+    static let minimumControlTarget: CGFloat = 44
+    #else
+    static let minimumControlTarget: CGFloat = 34
+    #endif
 }

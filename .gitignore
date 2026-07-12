@@ -29,7 +29,7 @@ Package.resolved
 .LSOverride
 Icon?
 
-# ── 凭据 / 机密（走 ~/.config/trailhead/secrets.json 或 Keychain，绝不入库）──
+# ── 凭据 / 机密（Release 仅 Keychain；Debug 本地文件也绝不入库）────────────
 *.xcconfig.local
 Secrets.swift
 secrets.json

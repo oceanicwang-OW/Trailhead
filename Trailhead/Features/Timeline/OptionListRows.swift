@@ -5,6 +5,21 @@
 import SwiftUI
 import TrailheadCore
 
+enum RecommendationPresentation {
+    static func visible<T>(_ options: [T], expanded: Bool, collapsedLimit: Int = 3) -> [T] {
+        expanded ? options : Array(options.prefix(collapsedLimit))
+    }
+
+    static func proximity(meters: Int?, minutes: Int?, prefix: String) -> String? {
+        guard let meters else { return nil }
+        let distance = meters < 1_000
+            ? "\(meters) m"
+            : String(format: "%.1f km", Double(meters) / 1_000)
+        if let minutes { return "\(prefix)最近点 \(distance) · 约 \(minutes) 分钟" }
+        return "\(prefix)最近点 \(distance)"
+    }
+}
+
 extension RouteTimelineView {
     /// 当天「附近美食推荐」（按就近 + 评分，不排进动线，供用户自选）。
     @ViewBuilder
@@ -12,18 +27,16 @@ extension RouteTimelineView {
         let options = day.foodOptions
         if !options.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("附近美食推荐")
-                    .font(Typo.display(15, .semibold))
-                    .foregroundStyle(Palette.textPrimary)
-                    .padding(.horizontal, 18)
-                ForEach(options) { foodRow($0) }
+                recommendationHeader(title: "备选推荐 · 附近美食", count: options.count)
+                ForEach(RecommendationPresentation.visible(options, expanded: showAllFoodOptions)) { foodRow($0) }
+                recommendationToggle(total: options.count, expanded: $showAllFoodOptions)
             }
             .padding(.top, 20)
         }
     }
 
     private func foodRow(_ opt: FoodOption) -> some View {
-        let selected = mapFocus?.id == opt.id
+        let selected = selectionStore.selection?.matchesRecommendation(opt.id) == true
         return HStack(spacing: 10) {
             optionThumbnail(photos: opt.photos, icon: "fork.knife", color: ItemKind.food.color)
             VStack(alignment: .leading, spacing: 2) {
@@ -37,6 +50,10 @@ extension RouteTimelineView {
                 }
                 .font(.system(size: 12))
                 .foregroundStyle(Palette.textSecondary)
+                if let proximity = RecommendationPresentation.proximity(
+                    meters: opt.distanceMeters, minutes: opt.estimatedMinutes, prefix: "距当天路线") {
+                    Text(proximity).font(.system(size: 11)).foregroundStyle(Palette.green)
+                }
                 optionTags(opt.tags)
             }
             Spacer()
@@ -49,7 +66,15 @@ extension RouteTimelineView {
             .stroke(selected ? ItemKind.food.color : .clear, lineWidth: 1.5))
         .contentShape(Rectangle())
         .onTapGesture {
-            mapFocus = MapFocus(id: opt.id, name: opt.name, lat: opt.lat, lng: opt.lng, kind: .food)
+            selectionStore.selection = .recommendation(
+                MapFocus(id: opt.id, name: opt.name, lat: opt.lat, lng: opt.lng, kind: .food))
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("在地图查看美食推荐：\(opt.name)")
+        .accessibilityAction {
+            selectionStore.selection = .recommendation(
+                MapFocus(id: opt.id, name: opt.name, lat: opt.lat, lng: opt.lng, kind: .food))
         }
         .padding(.horizontal, 18)
     }
@@ -60,18 +85,18 @@ extension RouteTimelineView {
         let options = trip.lodgingOptions
         if !options.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("住宿推荐（自选）")
-                    .font(Typo.display(15, .semibold))
-                    .foregroundStyle(Palette.textPrimary)
-                    .padding(.horizontal, 18)
-                ForEach(options) { lodgingRow($0) }
+                recommendationHeader(title: "备选推荐 · 住宿（自选）", count: options.count)
+                ForEach(RecommendationPresentation.visible(options, expanded: showAllLodgingOptions)) {
+                    lodgingRow($0)
+                }
+                recommendationToggle(total: options.count, expanded: $showAllLodgingOptions)
             }
             .padding(.top, 20)
         }
     }
 
     private func lodgingRow(_ opt: LodgingOption) -> some View {
-        let selected = mapFocus?.id == opt.id
+        let selected = selectionStore.selection?.matchesRecommendation(opt.id) == true
         return HStack(spacing: 10) {
             optionThumbnail(photos: opt.photos, icon: "bed.double.fill", color: Palette.green)
             VStack(alignment: .leading, spacing: 2) {
@@ -84,6 +109,10 @@ extension RouteTimelineView {
                 }
                 .font(.system(size: 12))
                 .foregroundStyle(Palette.textSecondary)
+                if let proximity = RecommendationPresentation.proximity(
+                    meters: opt.distanceMeters, minutes: opt.estimatedMinutes, prefix: "距整趟路线") {
+                    Text(proximity).font(.system(size: 11)).foregroundStyle(Palette.green)
+                }
                 optionTags(opt.tags)
             }
             Spacer()
@@ -96,9 +125,50 @@ extension RouteTimelineView {
             .stroke(selected ? ItemKind.lodging.color : .clear, lineWidth: 1.5))
         .contentShape(Rectangle())
         .onTapGesture {
-            mapFocus = MapFocus(id: opt.id, name: opt.name, lat: opt.lat, lng: opt.lng, kind: .lodging)
+            selectionStore.selection = .recommendation(
+                MapFocus(id: opt.id, name: opt.name, lat: opt.lat, lng: opt.lng, kind: .lodging))
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("在地图查看住宿推荐：\(opt.name)")
+        .accessibilityAction {
+            selectionStore.selection = .recommendation(
+                MapFocus(id: opt.id, name: opt.name, lat: opt.lat, lng: opt.lng, kind: .lodging))
         }
         .padding(.horizontal, 18)
+    }
+
+    private func recommendationHeader(title: String, count: Int) -> some View {
+        HStack(spacing: 7) {
+            Text(title)
+                .font(Typo.display(15, .semibold))
+                .foregroundStyle(Palette.textPrimary)
+            Text("\(count)")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Palette.textMuted)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Palette.fieldBG, in: Capsule())
+        }
+        .padding(.horizontal, 18)
+    }
+
+    @ViewBuilder
+    private func recommendationToggle(total: Int, expanded: Binding<Bool>) -> some View {
+        if total > 3 {
+            Button {
+                withAnimation(.snappy) { expanded.wrappedValue.toggle() }
+            } label: {
+                Label(expanded.wrappedValue ? "收起" : "查看其余 \(total - 3) 个",
+                      systemImage: expanded.wrappedValue ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Palette.green)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 18)
+            .accessibilityHint("展开或收起备选推荐，不会改变地图当前选择")
+        }
     }
 
     /// 首图缩略图；加载中/无图退化为类型图标（旧样式）。
@@ -149,7 +219,7 @@ extension RouteTimelineView {
             Image(systemName: icon)
                 .font(.system(size: 12))
                 .foregroundStyle(Palette.textSecondary)
-                .frame(width: 24, height: 24)
+                .frame(width: Metric.minimumControlTarget, height: Metric.minimumControlTarget)
                 .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)

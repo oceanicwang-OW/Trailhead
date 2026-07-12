@@ -24,8 +24,25 @@ public struct UsageStore {
         defaults.integer(forKey: Self.key(provider, date))
     }
 
+    public func recordLLMTokens(input: Int, output: Int, on date: Date = .now) {
+        defaults.set(llmInputTokens(on: date) + max(0, input), forKey: Self.tokenKey("input", date))
+        defaults.set(llmOutputTokens(on: date) + max(0, output), forKey: Self.tokenKey("output", date))
+    }
+
+    public func llmInputTokens(on date: Date = .now) -> Int {
+        defaults.integer(forKey: Self.tokenKey("input", date))
+    }
+
+    public func llmOutputTokens(on date: Date = .now) -> Int {
+        defaults.integer(forKey: Self.tokenKey("output", date))
+    }
+
     static func key(_ provider: Provider, _ date: Date) -> String {
         "usage.\(provider.rawValue).\(dayString(date))"
+    }
+
+    private static func tokenKey(_ direction: String, _ date: Date) -> String {
+        "usage.llm.tokens.\(direction).\(dayString(date))"
     }
 
     static func dayString(_ date: Date) -> String {

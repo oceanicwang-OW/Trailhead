@@ -37,9 +37,13 @@ struct TripSidebar: View {
             .foregroundStyle(Palette.textTertiary)
             .padding(.horizontal, 8).padding(.top, title == "即将出行" ? 0 : 16).padding(.bottom, 8)
         ForEach(items, id: \.id) { trip in
-            row(trip).opacity(dimmed ? 0.62 : 1)
-                .contentShape(Rectangle())
-                .onTapGesture { selection = trip }
+            let selected = selection?.id == trip.id
+            Button { selection = trip } label: {
+                row(trip).opacity(dimmed ? 0.72 : 1)
+                    .contentShape(Rectangle())
+            }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
                 .contextMenu {
                     Button(role: .destructive) { onDelete(trip) } label: {
                         Label("删除行程", systemImage: "trash")

@@ -25,6 +25,8 @@ final class NearbyFoodTests: XCTestCase {
         XCTAssertTrue(out.contains { $0.id == "far" })         // 近的不够时远的兜底补齐
         XCTAssertLessThan(out.firstIndex { $0.id == "near_hi" }!,
                           out.firstIndex { $0.id == "far" }!)  // 近的排在远的前
+        XCTAssertLessThan(out[0].distanceMeters ?? .max, 100)
+        XCTAssertGreaterThan(out[0].estimatedMinutes ?? 0, 0)
     }
 
     func testNoCoordsFallsBackToCityWideTopRated() {

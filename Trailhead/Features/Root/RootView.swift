@@ -15,9 +15,9 @@ struct RootView: View {
 
     @State private var selection: Trip?
     @State private var dayIndex = 0
-    @State private var selectedItemID: UUID?
-    @State private var mapFocus: MapFocus?
+    @StateObject private var mapSelection = MapSelectionStore()
     @State private var showNewTrip = false
+    @State private var tripDraft: NewTripDraft
 
     // 生成流程状态
     @State private var generating = false
@@ -25,13 +25,15 @@ struct RootView: View {
     @State private var genDays = 0
     @State private var genError: String?
     @State private var genTask: Task<Void, Never>?
+    @State private var lastGenerationRequest: GenerationRequest?
     @State private var quotaBanner = false
     @State private var tripPendingDelete: Trip?
 
     init(container: ModelContainer) {
-        // key 解析：环境变量 → ~/.config/trailhead/secrets.json → Keychain（不弹授权框）
+        // Release 仅从 Keychain 取 key；DEBUG 额外支持环境变量和本地开发配置文件。
         _engine = StateObject(wrappedValue: ItineraryEngine(
             source: AmapClient.live(), llm: DeepSeekClient.live(), context: container.mainContext))
+        _tripDraft = State(initialValue: NewTripDraft(days: NewTripDraft.rememberedDays()))
     }
 
     var body: some View {
@@ -40,9 +42,12 @@ struct RootView: View {
                 if quotaBanner { quotaBannerView }
             }
             .sheet(isPresented: $generating) { generatingSheet }
-            .alert("生成失败", isPresented: errorBinding, presenting: genError) { _ in
-                Button("好") { genError = nil; generating = false }
-            } message: { Text($0) }
+            .alert("生成失败", isPresented: errorBinding) {
+                Button("重试生成") { retryGeneration() }
+                Button("返回表单", role: .cancel) { returnToDraft() }
+            } message: {
+                Text(genError ?? "请稍后重试。")
+            }
             .confirmationDialog("删除这个行程？", isPresented: deletePresented, presenting: tripPendingDelete) { trip in
                 Button("删除「\(trip.city)」", role: .destructive) { performDelete(trip) }
                 Button("取消", role: .cancel) { tripPendingDelete = nil }
@@ -58,6 +63,7 @@ struct RootView: View {
             Spacer()
             Button { quotaBanner = false } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain)
+                .accessibilityLabel("关闭配额提示")
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 14).padding(.vertical, 10)
@@ -90,25 +96,35 @@ struct RootView: View {
                 if let trip = current {
                     RouteTimelineView(trip: trip,
                                       selectedDayIndex: $dayIndex,
-                                      selectedItemID: $selectedItemID,
-                                      mapFocus: $mapFocus)
+                                      selectionStore: mapSelection)
                         .navigationTitle(trip.city)
                         .navigationSubtitle(trip.subtitle)
                 } else { emptyState }
             }
             .navigationSplitViewColumnWidth(min: 380, ideal: Metric.timelineWidth, max: 520)
             .toolbar {
-                ToolbarItem { Button { showNewTrip = true } label: { Image(systemName: "plus") } }
+                ToolbarItem {
+                    Button { showNewTrip = true } label: { Image(systemName: "plus") }
+                        .help("新建行程")
+                        .accessibilityLabel("新建行程")
+                }
+                ToolbarItem {
+                    SettingsLink {
+                        Image(systemName: "gearshape")
+                    }
+                    .help("设置")
+                    .accessibilityLabel("设置")
+                }
             }
         } detail: {
             if let trip = current {
                 MapInspector(trip: trip, dayIndex: dayIndex,
-                             selectedItemID: $selectedItemID, mapFocus: $mapFocus)
+                             selectionStore: mapSelection)
                     .navigationSplitViewColumnWidth(min: 320, ideal: 380)
             } else { Color(Palette.canvasBG) }
         }
         .sheet(isPresented: $showNewTrip) {
-            NewTripView { prefs, dest, days, start in startGeneration(prefs, dest, days, start) }
+            NewTripView(draft: $tripDraft, onGenerate: startGeneration)
         }
     }
     #endif
@@ -123,8 +139,7 @@ struct RootView: View {
                     if let trip = current {
                         RouteTimelineView(trip: trip,
                                           selectedDayIndex: $dayIndex,
-                                          selectedItemID: $selectedItemID,
-                                          mapFocus: $mapFocus,
+                                          selectionStore: mapSelection,
                                           gutter: Metric.gutterCompact)
                             .navigationTitle("\(trip.city) · D\(dayIndex + 1)")
                             .navigationBarTitleDisplayMode(.inline)
@@ -134,7 +149,7 @@ struct RootView: View {
             .tabItem { Label("行程", systemImage: "list.bullet.indent") }
 
             NavigationStack {
-                NewTripView { prefs, dest, days, start in startGeneration(prefs, dest, days, start) }
+                NewTripView(draft: $tripDraft, onGenerate: startGeneration)
             }
             .tabItem { Label("新建", systemImage: "plus.circle") }
 
@@ -159,22 +174,35 @@ struct RootView: View {
         .frame(minWidth: 460, minHeight: 640)
     }
 
-    private func startGeneration(_ prefs: TripPrefs, _ destination: String, _ days: Int, _ startDate: Date) {
+    private struct GenerationRequest {
+        let draft: NewTripDraft
+    }
+
+    private func startGeneration(_ draft: NewTripDraft) {
+        draft.rememberDays()
+        let request = GenerationRequest(draft: draft)
+        lastGenerationRequest = request
+        runGeneration(request)
+    }
+
+    private func runGeneration(_ request: GenerationRequest) {
         showNewTrip = false
-        genCity = destination
-        genDays = days
+        genCity = request.draft.trimmedDestination
+        genDays = request.draft.days
         genError = nil
         generating = true
         genTask = Task {
             do {
-                let trip = try await engine.generate(destination: destination, prefs: prefs,
-                                                      days: days, startDate: startDate)
+                let trip = try await engine.generate(destination: request.draft.trimmedDestination,
+                                                      prefs: request.draft.preferences,
+                                                      days: request.draft.days,
+                                                      startDate: request.draft.startDate)
                 guard !Task.isCancelled else { return }
                 QuotaState().clear()
                 quotaBanner = false
                 selection = trip
                 dayIndex = 0
-                selectedItemID = nil
+                mapSelection.selection = nil
                 generating = false
             } catch {
                 guard !Task.isCancelled else { return }
@@ -183,10 +211,27 @@ struct RootView: View {
                     QuotaState().markExhausted()      // 降级：标记 + 持久横幅，行程仍可浏览
                     quotaBanner = true
                 } else {
-                    genError = Self.friendlyMessage(error)
+                    genError = Self.failureMessage(error, stage: engine.stage)
                 }
             }
         }
+    }
+
+    private func retryGeneration() {
+        genError = nil
+        guard let lastGenerationRequest else {
+            returnToDraft()
+            return
+        }
+        runGeneration(lastGenerationRequest)
+    }
+
+    private func returnToDraft() {
+        genError = nil
+        generating = false
+        #if os(macOS)
+        showNewTrip = true
+        #endif
     }
 
     /// ItineraryEngine.Stage → 分步状态（PDR T3.7 / 设计稿 FRAME 7）。
@@ -224,6 +269,19 @@ struct RootView: View {
         }
     }
 
+    static func failureMessage(_ error: Error, stage: ItineraryEngine.Stage) -> String {
+        let stageText: String
+        switch stage {
+        case .analyzing: stageText = "分析偏好"
+        case .routing: stageText = "规划路线"
+        case .dining: stageText = "匹配餐饮与住宿"
+        case .transit: stageText = "校准交通"
+        case .budgeting: stageText = "估算预算"
+        case .done: stageText = "保存结果"
+        }
+        return "\(friendlyMessage(error))\n失败阶段：\(stageText)。重试会优先复用已缓存地点。"
+    }
+
     private var errorBinding: Binding<Bool> {
         Binding(get: { genError != nil }, set: { if !$0 { genError = nil } })
     }
@@ -236,7 +294,7 @@ struct RootView: View {
     private func performDelete(_ trip: Trip) {
         let wasSelected = current?.id == trip.id
         try? TripRepository(context: context).delete(trip)
-        if wasSelected { selection = nil; dayIndex = 0; selectedItemID = nil }
+        if wasSelected { selection = nil; dayIndex = 0; mapSelection.selection = nil }
         tripPendingDelete = nil
     }
 
@@ -250,6 +308,6 @@ struct RootView: View {
     }
 
     private var bindingSelection: Binding<Trip?> {
-        Binding(get: { current }, set: { selection = $0; dayIndex = 0; selectedItemID = nil })
+        Binding(get: { current }, set: { selection = $0; dayIndex = 0; mapSelection.selection = nil })
     }
 }

@@ -38,19 +38,22 @@ public struct DeepSeekClient: LLMProvider {
     private let session: URLSession
     private let keyProvider: () -> String?
     private let onCall: (() -> Void)?
+    private let onUsage: ((Int, Int) -> Void)?
 
     public init(model: String = "deepseek-chat",
                 timeout: TimeInterval = 30,
                 maxRetries: Int = 1,
                 session: URLSession = .shared,
                 keyProvider: @escaping () -> String? = { KeychainStore.get(KeychainStore.Account.llm) },
-                onCall: (() -> Void)? = nil) {
+                onCall: (() -> Void)? = nil,
+                onUsage: ((Int, Int) -> Void)? = nil) {
         self.model = model
         self.timeout = timeout
         self.maxRetries = maxRetries
         self.session = session
         self.keyProvider = keyProvider
         self.onCall = onCall
+        self.onUsage = onUsage
     }
 
     /// 低层补全（PDR T2.6）：返回 choices[0].message.content 文本。
@@ -110,6 +113,9 @@ public struct DeepSeekClient: LLMProvider {
         if let error = json["error"] as? [String: Any] {
             throw LLMError.apiError(error["message"] as? String ?? "未知错误")
         }
+        if let usage = json["usage"] as? [String: Any] {
+            onUsage?(Self.int(usage["prompt_tokens"]), Self.int(usage["completion_tokens"]))
+        }
         guard let choices = json["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],
               let content = message["content"] as? String, !content.isEmpty else {
@@ -126,5 +132,11 @@ public struct DeepSeekClient: LLMProvider {
         case let LLMError.http(status): return status >= 500
         default: return false
         }
+    }
+
+    private static func int(_ value: Any?) -> Int {
+        if let value = value as? Int { return value }
+        if let value = value as? String { return Int(value) ?? 0 }
+        return 0
     }
 }

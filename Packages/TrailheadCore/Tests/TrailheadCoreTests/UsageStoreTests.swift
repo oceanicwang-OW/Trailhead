@@ -44,4 +44,13 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(store.count(.amap, on: today), 7)
         XCTAssertEqual(store.count(.amap, on: yesterday), 0)   // 次日清零
     }
+
+    func testLLMTokensAccumulateSeparately() {
+        let store = UsageStore(defaults: defaults)
+        store.recordLLMTokens(input: 100, output: 20)
+        store.recordLLMTokens(input: 40, output: 5)
+
+        XCTAssertEqual(store.llmInputTokens(), 140)
+        XCTAssertEqual(store.llmOutputTokens(), 25)
+    }
 }
