@@ -67,6 +67,46 @@ private func regenCandidate(_ id: String, kind: ItemKind = .sight,
 }
 
 final class TripRepositoryTests: XCTestCase {
+    @MainActor
+    func testVisitDurationChoiceShiftsOnlyLaterPlannedStops() throws {
+        let context = try TestSupport.makeContext()
+        let repo = TripRepository(context: context)
+        let first = PlanItem.poi(0, kind: .sight, time: "09:00", name: "A",
+                                 subtype: "景点", note: "", stay: "约 1.5 小时")
+        first.plannedStayMinutes = 90
+        let second = PlanItem.poi(1, kind: .sight, time: "11:00", name: "B",
+                                  subtype: "景点", note: "", stay: "约 1.5 小时")
+        let completed = PlanItem.poi(2, kind: .sight, time: "13:00", name: "C",
+                                     subtype: "景点", note: "", stay: "约 1.5 小时")
+        completed.visitStatus = .completed
+        let day = DayPlan(dayIndex: 0, items: [first, second, completed])
+        _ = try repo.create(city: "测试", days: [day])
+
+        try repo.updateVisitDuration(first, in: day, minutes: 150)
+
+        XCTAssertEqual(first.plannedStayMinutes, 150)
+        XCTAssertEqual(second.plannedTime, "12:00")
+        XCTAssertEqual(completed.plannedTime, "13:00")
+    }
+
+    @MainActor
+    func testVisitStatusRecordsActualTimes() throws {
+        let context = try TestSupport.makeContext()
+        let repo = TripRepository(context: context)
+        let item = PlanItem.poi(0, kind: .sight, time: "09:00", name: "A",
+                                subtype: "景点", note: "", stay: "")
+        let day = DayPlan(dayIndex: 0, items: [item])
+        _ = try repo.create(city: "测试", days: [day])
+        let start = Date(timeIntervalSince1970: 100)
+        let end = Date(timeIntervalSince1970: 200)
+
+        try repo.updateVisitStatus(item, status: .visiting, at: start)
+        try repo.updateVisitStatus(item, status: .completed, at: end)
+
+        XCTAssertEqual(item.visitStatus, .completed)
+        XCTAssertEqual(item.actualStartAt, start)
+        XCTAssertEqual(item.actualEndAt, end)
+    }
 
     func testCreateAndCount() throws {
         let repo = TripRepository(context: try TestSupport.makeContext())
@@ -315,17 +355,16 @@ final class TripRepositoryTests: XCTestCase {
         XCTAssertEqual(day1.sortedItems.compactMap(\.poiId), ["KEEP"])
 
         let regenerated = day0.sortedItems
-        // 动线 X→Z→(午餐 Y 顺路)→W；相邻点间补交通段。
-        XCTAssertEqual(regenerated.compactMap(\.poiId), ["X", "Z", "Y", "W"])
+        // 轻松负载下保留两个核心景点与一餐，超出舒适预算的 W 不强塞进主线。
+        XCTAssertEqual(regenerated.compactMap(\.poiId), ["X", "Y", "Z"])
         XCTAssertEqual(regenerated.map(\.kind),
-                       [.sight, .transit, .sight, .transit, .food, .transit, .sight])
-        XCTAssertEqual(regenerated.map(\.order), Array(0..<7))
-        // 时间/停留改由确定性模拟器产出：首点从 dayStart 09:00 起、景点默认停留 90 分；note 留空（P7 未做）。
-        XCTAssertEqual(regenerated[0].plannedTime, "09:00")
-        XCTAssertEqual(regenerated[0].stayLabel, "约 1.5 小时")
+                       [.sight, .transit, .food, .transit, .sight])
+        XCTAssertEqual(regenerated.map(\.order), Array(0..<5))
+        XCTAssertEqual(regenerated[0].plannedTime, "09:30")
+        XCTAssertEqual(regenerated[0].stayLabel, "约 1.8 小时")
         XCTAssertNil(regenerated[0].note)
         XCTAssertTrue(regenerated.allSatisfy { !oldDay0IDs.contains($0.id) })
-        XCTAssertEqual(source.routePairs, ["X-Z", "Z-Y", "Y-W"])
+        XCTAssertEqual(source.routePairs, ["X-Y", "Y-Z", "Z-W"])
     }
 
     func testRegenerateDayExcludesPOIsAlreadyUsedByOtherDays() async throws {

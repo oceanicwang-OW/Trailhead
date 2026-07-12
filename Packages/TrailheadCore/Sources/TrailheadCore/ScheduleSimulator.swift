@@ -65,7 +65,8 @@ public enum ScheduleSimulator {
                                 scores: [String: Double] = [:],
                                 travelTimes: RouteTimeMatrix = [:],
                                 entryAnchor: POICandidate? = nil,
-                                exitAnchor: POICandidate? = nil) -> DaySimulation {
+                                exitAnchor: POICandidate? = nil,
+                                comfortPolicy: DayComfortPolicy? = nil) -> DaySimulation {
         guard !stops.isEmpty else { return DaySimulation(scheduled: []) }
 
         var order = stops
@@ -81,7 +82,7 @@ public enum ScheduleSimulator {
             switch forwardPass(order, pace: pace, city: city, weekday: weekday,
                                dayStart: dayStart, dayEnd: dayEnd, priors: priors, maxWait: maxWait,
                                travelTimes: travelTimes, entryAnchor: entryAnchor,
-                               exitAnchor: exitAnchor) {
+                               exitAnchor: exitAnchor, comfortPolicy: comfortPolicy) {
             case .success(let scheduled):
                 return DaySimulation(scheduled: scheduled, spilled: spilled)
 
@@ -140,18 +141,28 @@ public enum ScheduleSimulator {
                                     weekday: Int?, dayStart: Int, dayEnd: Int,
                                     priors: StayDuration.Priors, maxWait: Int,
                                     travelTimes: RouteTimeMatrix,
-                                    entryAnchor: POICandidate?, exitAnchor: POICandidate?) -> PassResult {
+                                    entryAnchor: POICandidate?, exitAnchor: POICandidate?,
+                                    comfortPolicy: DayComfortPolicy?) -> PassResult {
         var t = dayStart
         var prev = entryAnchor
         var out: [ScheduledStop] = []
+        var continuousActivity = 0
 
         for (i, stop) in order.enumerated() {
             let travel = prev.map {
                 travelTimes[RouteTimeKey(fromID: $0.id, toID: stop.id)]
                     ?? TravelEstimator.minutes(from: $0, to: stop, city: city)
             } ?? 0
-            var arrival = t + travel
+            let profile = comfortPolicy.map { _ in StayDuration.profile(for: stop) }
+            let access = profile?.accessBufferMin ?? 0
+            let exit = profile?.exitBufferMin ?? 0
             let stay = StayDuration.duration(for: stop, pace: pace, priors: priors)
+            if let policy = comfortPolicy, !out.isEmpty, stop.kind != .food,
+               continuousActivity + travel + access + stay > policy.continuousActivityLimitMin {
+                t += policy.restBufferMin
+                continuousActivity = 0
+            }
+            var arrival = t + travel + access
 
             if let windows = OpenHoursParser.schedule(stop.openHours).windows(on: weekday) {
                 if windows.isEmpty { return .closedDay(i) }
@@ -165,10 +176,15 @@ public enum ScheduleSimulator {
                 }
             }
 
-            if arrival + stay > dayEnd { return .overflow(i) }
+            if arrival + stay + exit > dayEnd { return .overflow(i) }
 
             out.append(ScheduledStop(candidate: stop, arrival: arrival, stayMin: stay))
-            t = arrival + stay
+            t = arrival + stay + exit
+            if stop.kind == .food {
+                continuousActivity = 0
+            } else {
+                continuousActivity += travel + access + stay + exit
+            }
             prev = stop
         }
         if let last = order.last, let exitAnchor {

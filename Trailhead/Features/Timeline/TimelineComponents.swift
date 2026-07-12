@@ -114,8 +114,18 @@ struct POICard: View {
             Text(item.name ?? "")
                 .font(Typo.cardTitle)
                 .foregroundStyle(Palette.textPrimary)
+            if item.visitStatus != .planned {
+                Label(statusText, systemImage: statusIcon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(item.visitStatus == .completed ? Palette.green : Palette.textMuted)
+            }
+            if let range = durationRange {
+                Text(range)
+                    .font(Typo.caption)
+                    .foregroundStyle(Palette.green)
+            }
             if let note = item.note, !note.isEmpty {
-                Text(stayLine(note))
+                Text(note)
                     .font(Typo.caption)
                     .foregroundStyle(Palette.textSecondary)
             }
@@ -141,9 +151,36 @@ struct POICard: View {
                   : Palette.cardBG)
     }
 
-    private func stayLine(_ note: String) -> String {
-        if let stay = item.stayLabel, !stay.isEmpty { return "\(note) · \(stay)" }
-        return note
+    private var durationRange: String? {
+        guard let minimum = item.minimumStayMinutes,
+              let comfortable = item.comfortableStayMinutes else { return item.stayLabel }
+        func text(_ minutes: Int) -> String {
+            if minutes < 60 { return "\(minutes) 分钟" }
+            let hours = Double(minutes) / 60
+            return hours == hours.rounded()
+                ? "\(Int(hours)) 小时"
+                : String(format: "%.1f 小时", hours)
+        }
+        let reserved = item.plannedStayMinutes.map { " · 当前预留 \(text($0))" } ?? ""
+        return "建议游玩 \(text(minimum))～\(text(comfortable))\(reserved)"
+    }
+
+    private var statusText: String {
+        switch item.visitStatus {
+        case .planned: return "未开始"
+        case .visiting: return "游玩中"
+        case .completed: return "已完成"
+        case .skipped: return "已跳过"
+        }
+    }
+
+    private var statusIcon: String {
+        switch item.visitStatus {
+        case .planned: return "clock"
+        case .visiting: return "figure.walk"
+        case .completed: return "checkmark.circle.fill"
+        case .skipped: return "forward.end.fill"
+        }
     }
 }
 

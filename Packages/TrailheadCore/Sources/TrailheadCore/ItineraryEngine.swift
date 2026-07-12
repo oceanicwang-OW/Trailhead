@@ -171,9 +171,12 @@ public final class ItineraryEngine: ObservableObject {
 
         set(.transit, 0.8)
         let foodPool = candidates.filter { $0.kind == .food }
+        let optionalByDay = OptionalStopSelector.assign(pool: itineraryCandidates,
+                                                        planned: annotated.stops, prefs: prefs)
         let dayPlans = await buildDays(annotated.stops, themes: annotated.themes,
                                        destination: destination, adcode: adcode,
                                        startDate: startDate, foodPool: foodPool,
+                                       optionalByDay: optionalByDay,
                                        routeSource: routedSource)
         let transitItems = dayPlans.flatMap(\.items).filter { $0.kind == .transit }
         diagnostics.transitSegments = transitItems.count
@@ -312,6 +315,7 @@ public final class ItineraryEngine: ObservableObject {
     /// 组装每天的 PlanItem，并在相邻 POI 间补交通段（PDR T3.5）。themes 与 perDay 天序对齐（P7）。
     private func buildDays(_ perDay: [[PlannedStop]], themes: [String?], destination: String,
                            adcode: String, startDate: Date, foodPool: [POICandidate],
+                           optionalByDay: [[OptionalVisitOption]],
                            routeSource: POIDataSource) async -> [DayPlan] {
         let cal = Calendar.current
         var result: [DayPlan] = []
@@ -321,6 +325,7 @@ public final class ItineraryEngine: ObservableObject {
             let day = DayPlan(dayIndex: index, date: date, cityLabel: destination, items: items)
             day.theme = (themes.indices.contains(index) ? themes[index] : nil) ?? ""
             day.foodOptions = Self.nearbyFood(forItems: items, foodPool: foodPool)
+            day.optionalVisits = optionalByDay.indices.contains(index) ? optionalByDay[index] : []
             result.append(day)
         }
         return result

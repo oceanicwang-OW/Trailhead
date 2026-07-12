@@ -17,9 +17,9 @@ final class DayClustererTests: XCTestCase {
     }
 
     func testMaxSightsPerPace() {
-        XCTAssertEqual(DayClusterer.maxSights(for: .tight), 5)
-        XCTAssertEqual(DayClusterer.maxSights(for: .relaxed), 4)
-        XCTAssertEqual(DayClusterer.maxSights(for: .casual), 3)
+        XCTAssertEqual(DayClusterer.maxSights(for: .tight), 4)
+        XCTAssertEqual(DayClusterer.maxSights(for: .relaxed), 3)
+        XCTAssertEqual(DayClusterer.maxSights(for: .casual), 2)
     }
 
     func testEmptyReturnsDaysEmptyBuckets() {

@@ -21,6 +21,7 @@ public enum SpillRepair {
         public var baseAnchor: POICandidate?
         public var maxSightsPerDay: Int
         public var stayBudget: Int?          // 该天 Σ非餐停留上限（D7；nil = 不启用）
+        public var comfortPolicy: DayComfortPolicy?
 
         public init(pace: Pace, city: String, weekdays: [Int?],
                     dayStart: Int = 9 * 60, dayEnd: Int = 20 * 60,
@@ -29,13 +30,15 @@ public enum SpillRepair {
                     scores: [String: Double] = [:],
                     travelTimes: RouteTimeMatrix = [:],
                     baseAnchor: POICandidate? = nil,
-                    maxSightsPerDay: Int = 4, stayBudget: Int? = nil) {
+                    maxSightsPerDay: Int = 4, stayBudget: Int? = nil,
+                    comfortPolicy: DayComfortPolicy? = nil) {
             self.pace = pace; self.city = city; self.weekdays = weekdays
             self.dayStart = dayStart; self.dayEnd = dayEnd; self.priors = priors
             self.maxWait = maxWait; self.scores = scores
             self.travelTimes = travelTimes
             self.baseAnchor = baseAnchor
             self.maxSightsPerDay = maxSightsPerDay; self.stayBudget = stayBudget
+            self.comfortPolicy = comfortPolicy
         }
     }
 
@@ -73,7 +76,8 @@ public enum SpillRepair {
                                                      priors: ctx.priors, maxWait: ctx.maxWait,
                                                      scores: ctx.scores, travelTimes: ctx.travelTimes,
                                                      entryAnchor: ctx.baseAnchor,
-                                                     exitAnchor: ctx.baseAnchor)
+                                                     exitAnchor: ctx.baseAnchor,
+                                                     comfortPolicy: ctx.comfortPolicy)
                 // 铁律：重插不得破坏目标天已有点（全员保留且零 spill 才接受）。
                 if sim.spilled.isEmpty, sim.scheduled.count == trial.count {
                     orders[d] = sim.scheduled.map(\.candidate)
@@ -93,8 +97,14 @@ public enum SpillRepair {
         let sights = order.filter { $0.kind != .food }
         guard sights.count < ctx.maxSightsPerDay else { return false }
         if let budget = ctx.stayBudget {
-            let used = sights.reduce(0) { $0 + StayDuration.duration(for: $1, pace: ctx.pace, priors: ctx.priors) }
-            guard used + StayDuration.duration(for: c, pace: ctx.pace, priors: ctx.priors) <= budget else {
+            func cost(_ candidate: POICandidate) -> Int {
+                let stay = StayDuration.duration(for: candidate, pace: ctx.pace, priors: ctx.priors)
+                guard ctx.comfortPolicy != nil else { return stay }
+                let profile = StayDuration.profile(for: candidate)
+                return profile.accessBufferMin + stay + profile.exitBufferMin
+            }
+            let used = sights.reduce(0) { $0 + cost($1) }
+            guard used + cost(c) <= budget else {
                 return false
             }
         }

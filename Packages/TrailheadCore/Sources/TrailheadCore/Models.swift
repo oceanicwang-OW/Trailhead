@@ -54,6 +54,13 @@ public enum Pace: String, Codable, CaseIterable, Sendable {
     }
 }
 
+public enum VisitExecutionStatus: String, Codable, Sendable {
+    case planned
+    case visiting
+    case completed
+    case skipped
+}
+
 // MARK: - Preferences (Codable, embedded on Trip)
 
 public struct TripPrefs: Codable, Hashable, Sendable {
@@ -136,6 +143,35 @@ public struct FoodOption: Codable, Hashable, Sendable, Identifiable {
         openHours = try c.decodeIfPresent(String.self, forKey: .openHours)
         distanceMeters = try c.decodeIfPresent(Int.self, forKey: .distanceMeters)
         estimatedMinutes = try c.decodeIfPresent(Int.self, forKey: .estimatedMinutes)
+    }
+}
+
+/// 未占用主时间线的景点备选；用户有余力时再决定是否前往。
+public struct OptionalVisitOption: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var subtype: String
+    public var lat: Double
+    public var lng: Double
+    public var rating: Double?
+    public var tags: [String]
+    public var photos: [String]
+    public var minimumMinutes: Int
+    public var comfortableMinutes: Int
+    public var extendedMinutes: Int
+    public var distanceMeters: Int?
+    public var estimatedMinutes: Int?
+
+    public init(id: String, name: String, subtype: String, lat: Double, lng: Double,
+                rating: Double?, tags: [String], photos: [String],
+                minimumMinutes: Int, comfortableMinutes: Int, extendedMinutes: Int,
+                distanceMeters: Int?, estimatedMinutes: Int?) {
+        self.id = id; self.name = name; self.subtype = subtype
+        self.lat = lat; self.lng = lng; self.rating = rating
+        self.tags = tags; self.photos = photos
+        self.minimumMinutes = minimumMinutes; self.comfortableMinutes = comfortableMinutes
+        self.extendedMinutes = extendedMinutes; self.distanceMeters = distanceMeters
+        self.estimatedMinutes = estimatedMinutes
     }
 }
 
@@ -243,6 +279,7 @@ public final class DayPlan {
     public var cityLabel: String         // "京都"
     public var theme: String = ""        // 当天主题（P7 NoteWriter 生成，空=未生成；SwiftData 轻量迁移安全）
     public var foodData: Data = Data()   // encoded [FoodOption]（当天附近美食推荐）
+    public var optionalVisitData: Data = Data() // encoded [OptionalVisitOption]（不占主时间线）
     @Relationship(deleteRule: .cascade) public var items: [PlanItem]
 
     public init(id: UUID = UUID(), dayIndex: Int, date: Date = .now,
@@ -254,6 +291,10 @@ public final class DayPlan {
     public var foodOptions: [FoodOption] {
         get { (try? JSONDecoder().decode([FoodOption].self, from: foodData)) ?? [] }
         set { foodData = (try? JSONEncoder().encode(newValue)) ?? Data() }
+    }
+    public var optionalVisits: [OptionalVisitOption] {
+        get { (try? JSONDecoder().decode([OptionalVisitOption].self, from: optionalVisitData)) ?? [] }
+        set { optionalVisitData = (try? JSONEncoder().encode(newValue)) ?? Data() }
     }
 }
 
@@ -271,6 +312,13 @@ public final class PlanItem {
     public var lng: Double?              // GCJ-02
     public var plannedTime: String?      // "09:00"
     public var stayLabel: String?        // "约 2.5 小时"
+    public var plannedStayMinutes: Int?
+    public var minimumStayMinutes: Int?
+    public var comfortableStayMinutes: Int?
+    public var extendedStayMinutes: Int?
+    public var visitStatusRaw: String = VisitExecutionStatus.planned.rawValue
+    public var actualStartAt: Date?
+    public var actualEndAt: Date?
     public var note: String?             // "千本鸟居 · 建议早到"
 
     // Transit fields (kind == transit)
@@ -296,6 +344,10 @@ public final class PlanItem {
     public var transitReliability: TransitReliability {
         get { transitReliabilityRaw.flatMap(TransitReliability.init) ?? .verified }
         set { transitReliabilityRaw = newValue.rawValue }
+    }
+    public var visitStatus: VisitExecutionStatus {
+        get { VisitExecutionStatus(rawValue: visitStatusRaw) ?? .planned }
+        set { visitStatusRaw = newValue.rawValue }
     }
 
     /// "JR 奈良线 + 步行 · 18 分钟 · 4.2 km · ¥150"

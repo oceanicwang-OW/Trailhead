@@ -8,6 +8,8 @@ import Foundation
 import XCTest
 
 final class MealSlotterTests: XCTestCase {
+    private let schedulingPriors = StayDuration.Priors(sight: 90, museum: 120, nature: 120,
+                                                       food: 60, other: 60)
 
     private func sight(_ id: String, _ lat: Double, _ lng: Double,
                        subtype: String = "") -> POICandidate {
@@ -20,7 +22,8 @@ final class MealSlotterTests: XCTestCase {
 
     /// 第一遍模拟：给景点赋临时时刻线（relaxed 景点 90 分、博物馆 120 分）。
     private func firstPass(_ stops: [POICandidate]) -> [ScheduledStop] {
-        ScheduleSimulator.simulate(stops: stops, pace: .relaxed, city: "").scheduled
+        ScheduleSimulator.simulate(stops: stops, pace: .relaxed, city: "",
+                                   priors: schedulingPriors).scheduled
     }
 
     func testEmptyScheduleGetsNoMeals() {
@@ -94,7 +97,8 @@ final class MealSlotterTests: XCTestCase {
         let stops = [sight("s0", 0, 0), sight("s1", 0, 0), sight("s2", 0, 0)]
         let withMeals = MealSlotter.insertMeals(schedule: firstPass(stops),
                                                 foodPool: [food("lunch", 0, 0, 4.5)])
-        let final = ScheduleSimulator.simulate(stops: withMeals, pace: .relaxed, city: "").scheduled
+        let final = ScheduleSimulator.simulate(stops: withMeals, pace: .relaxed, city: "",
+                                               priors: schedulingPriors).scheduled
         guard let lunch = final.first(where: { $0.candidate.id == "lunch" }) else {
             return XCTFail("午餐应在终版时刻线中")
         }

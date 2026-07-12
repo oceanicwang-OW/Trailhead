@@ -73,9 +73,9 @@ final class ScheduleSimulatorTests: XCTestCase {
     }
 
     func testMissedWindowRescuedBySwapKeepsBothStops() {
-        // 09:00-10:30 早闭点排第二时已经无法在闭馆前完成；交换到首位后刚好完成 → 两点都保住。
+        // 09:00-10:45 早闭点排第二时无法完成；交换到首位后刚好完成 → 两点都保住。
         let first = poi("open", 0, 0)
-        let narrow = poi("narrow", 0, 0, openHours: "09:00-10:30")
+        let narrow = poi("narrow", 0, 0, openHours: "09:00-10:45")
         let out = ScheduleSimulator.simulate(stops: [first, narrow], pace: .relaxed, city: "",
                                              dayStart: start, dayEnd: end)
         XCTAssertEqual(out.scheduled.map(\.candidate.id), ["narrow", "open"])
@@ -83,10 +83,9 @@ final class ScheduleSimulatorTests: XCTestCase {
     }
 
     func testLateArrivalRescuedBySwapWithPrevious() {
-        // 迟到交换前移：b 必须在 10:30 前完成，排在 a（停 90 分）后会 10:30 才到 →
-        // 与 a 交换后 b 在 09:00–10:30 完成、a 其后，两点都保住。
+        // 迟到交换前移：b 必须在 10:45 前完成；交换到首位后可完整游玩。
         let a = poi("a", 0, 0)
-        let b = poi("b", 0, 0, openHours: "09:00-10:30")
+        let b = poi("b", 0, 0, openHours: "09:00-10:45")
         let out = ScheduleSimulator.simulate(stops: [a, b], pace: .relaxed, city: "",
                                              dayStart: start, dayEnd: end)
         XCTAssertEqual(out.scheduled.map(\.candidate.id), ["b", "a"])
@@ -115,12 +114,12 @@ final class ScheduleSimulatorTests: XCTestCase {
     }
 
     func testOverflowSacrificesLowestScoreNotTail() {
-        // D3：dayEnd 11:30 只装得下两点；排尾 c 是最高分招牌 → 牺牲的应是低分 b，而非按位置砍 c。
+        // D3：dayEnd 12:30 只装得下两点；排尾 c 是最高分 → 牺牲低分 b。
         let a = poi("a", 0, 0, rating: 4.5)
         let b = poi("b", 0, 0, rating: 3.0)
         let c = poi("c", 0, 0, rating: 5.0)
         let out = ScheduleSimulator.simulate(stops: [a, b, c], pace: .relaxed, city: "",
-                                             dayStart: start, dayEnd: 12 * 60)
+                                             dayStart: start, dayEnd: 12 * 60 + 30)
         XCTAssertEqual(out.scheduled.map(\.candidate.id), ["a", "c"])
         XCTAssertEqual(out.spilled.map(\.candidate.id), ["b"])
         XCTAssertEqual(out.spilled.first?.reason, "超出当日时间窗")
@@ -154,7 +153,7 @@ final class ScheduleSimulatorTests: XCTestCase {
                                              dayStart: start, dayEnd: end,
                                              travelTimes: matrix)
 
-        XCTAssertEqual(out.scheduled.last?.arrival, 12 * 60 + 30)
+        XCTAssertEqual(out.scheduled.last?.arrival, 12 * 60 + 45)
     }
 
     func testHotelAnchorTravelShiftsArrivalAndReservesReturn() {

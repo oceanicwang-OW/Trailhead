@@ -27,6 +27,7 @@ public enum ItineraryDayBuilder {
         let food = candidates.filter { $0.kind == .food }
         let pace = prefs.pace
         let maxPerDay = DayClusterer.maxSights(for: pace)
+        let comfortPolicy = DayComfortPolicy.policy(for: pace)
 
         // 综合分 + 停留先验的统一映射：D3 牺牲、D6 播种、D7 预算共用同一真源。
         let scores = Dictionary(candidates.map {
@@ -34,9 +35,17 @@ public enum ItineraryDayBuilder {
                                             budgetPerDay: prefs.budgetPerDay))
         },
                                 uniquingKeysWith: { a, _ in a })
-        let stays = Dictionary(candidates.map { ($0.id, StayDuration.duration(for: $0, pace: pace)) },
+        let profiles = Dictionary(candidates.map { ($0.id, StayDuration.profile(for: $0)) },
+                                  uniquingKeysWith: { a, _ in a })
+        let stays = Dictionary(candidates.map {
+            let profile = profiles[$0.id]!
+            return ($0.id, profile.accessBufferMin
+                + VisitProfileResolver.selectedMinutes(in: profile.duration, pace: pace)
+                + profile.exitBufferMin)
+        },
                                uniquingKeysWith: { a, _ in a })
-        let stayBudget = Int(DayClusterer.defaultTimeBudgetRatio * Double(dayEnd - dayStart))
+        let stayBudget = comfortPolicy.loadBudget(dayStart: dayStart, dayEnd: dayEnd)
+        let dayAnchorIDs = Set(profiles.compactMap { $0.value.isDayAnchor ? $0.key : nil })
         // 天序号 → weekday（1=周一…7=周日；无日期 → nil，D2 退化 base）。
         let weekdays: [Int?] = (0..<max(days, 1)).map { weekday(of: startDate, dayOffset: $0) }
 
@@ -44,7 +53,8 @@ public enum ItineraryDayBuilder {
         let initialClusters: [[POICandidate]] = days <= 1
             ? [sights]
             : DayClusterer.cluster(sights: sights, days: days, maxSightsPerDay: maxPerDay,
-                                   scores: scores, stayMinutes: stays, stayBudget: stayBudget)
+                                   scores: scores, stayMinutes: stays, stayBudget: stayBudget,
+                                   dayAnchorIDs: dayAnchorIDs)
         let dayClusters = days <= 1 ? initialClusters : GlobalItineraryOptimizer.optimize(
             clusters: initialClusters, prefs: prefs, weekdays: weekdays, city: city,
             baseAnchor: baseAnchor, maxSightsPerDay: maxPerDay
@@ -68,7 +78,8 @@ public enum ItineraryDayBuilder {
             // 4. 第一遍模拟（仅景点）→ 临时时刻线；丢点按分牺牲进 spill 池（D1/D3）。
             let first = ScheduleSimulator.simulate(stops: routed, pace: pace, city: city, weekday: wd,
                                                    dayStart: dayStart, dayEnd: dayEnd, scores: scores,
-                                                   entryAnchor: baseAnchor, exitAnchor: baseAnchor)
+                                                   entryAnchor: baseAnchor, exitAnchor: baseAnchor,
+                                                   comfortPolicy: comfortPolicy)
             spillPool += first.spilled.map { (day: dayIdx, stop: $0) }
             // 5. 按临时时刻线插午/晚餐（餐窗中点定位 + 顺路绕行选店，跨天去重，D1）。
             let withMeals = MealSlotter.insertMeals(schedule: first.scheduled, foodPool: food,
@@ -78,7 +89,8 @@ public enum ItineraryDayBuilder {
             // 6. 第二遍模拟（景点+餐饮）→ 终版顺序；被挤掉的景点同样进 spill（餐饮软约束不重插）。
             let second = ScheduleSimulator.simulate(stops: withMeals, pace: pace, city: city, weekday: wd,
                                                     dayStart: dayStart, dayEnd: dayEnd, scores: scores,
-                                                    entryAnchor: baseAnchor, exitAnchor: baseAnchor)
+                                                    entryAnchor: baseAnchor, exitAnchor: baseAnchor,
+                                                    comfortPolicy: comfortPolicy)
             spillPool += second.spilled.filter { $0.candidate.kind != .food }
                 .map { (day: dayIdx, stop: $0) }
             for stop in second.scheduled where stop.candidate.kind == .food {
@@ -96,7 +108,7 @@ public enum ItineraryDayBuilder {
             let ctx = SpillRepair.Context(pace: pace, city: city, weekdays: weekdays,
                                           dayStart: dayStart, dayEnd: dayEnd, scores: scores,
                                           baseAnchor: baseAnchor, maxSightsPerDay: maxPerDay,
-                                          stayBudget: stayBudget)
+                                          stayBudget: stayBudget, comfortPolicy: comfortPolicy)
             (dayOrders, dropped) = SpillRepair.repair(dayOrders: dayOrders, spill: spillPool, context: ctx)
         } else {
             dropped = spillPool.map(\.stop)
@@ -109,7 +121,8 @@ public enum ItineraryDayBuilder {
             let wd = weekdays[min(dayIdx, weekdays.count - 1)]
             let sim = ScheduleSimulator.simulate(stops: order, pace: pace, city: city, weekday: wd,
                                                  dayStart: dayStart, dayEnd: dayEnd, scores: scores,
-                                                 entryAnchor: baseAnchor, exitAnchor: baseAnchor)
+                                                 entryAnchor: baseAnchor, exitAnchor: baseAnchor,
+                                                 comfortPolicy: comfortPolicy)
             result.append(sim.scheduled.map {
                 PlannedStop(candidate: $0.candidate, time: clock($0.arrival),
                             stayMin: $0.stayMin, note: nil)
@@ -135,7 +148,8 @@ public enum ItineraryDayBuilder {
         var travelTimes: RouteTimeMatrix = [:]
         let weekdays = stops.indices.map { weekday(of: startDate, dayOffset: $0) }
         let maxPerDay = DayClusterer.maxSights(for: prefs.pace)
-        let stayBudget = Int(DayClusterer.defaultTimeBudgetRatio * Double(dayEnd - dayStart))
+        let comfortPolicy = DayComfortPolicy.policy(for: prefs.pace)
+        let stayBudget = comfortPolicy.loadBudget(dayStart: dayStart, dayEnd: dayEnd)
         let scores = Dictionary(orders.flatMap { $0 }.map {
             ($0.id, CandidateCuration.score($0, tags: prefs.tags, cuisines: prefs.cuisines,
                                             budgetPerDay: prefs.budgetPerDay))
@@ -154,7 +168,8 @@ public enum ItineraryDayBuilder {
                     stops: order, pace: prefs.pace, city: city,
                     weekday: weekdays[dayIndex], dayStart: dayStart, dayEnd: dayEnd,
                     scores: scores, travelTimes: travelTimes,
-                    entryAnchor: baseAnchor, exitAnchor: baseAnchor
+                    entryAnchor: baseAnchor, exitAnchor: baseAnchor,
+                    comfortPolicy: comfortPolicy
                 )
                 scheduledByDay.append(simulation.scheduled)
                 nextOrders.append(simulation.scheduled.map(\.candidate))
@@ -168,7 +183,7 @@ public enum ItineraryDayBuilder {
                     dayStart: dayStart, dayEnd: dayEnd, scores: scores,
                     travelTimes: travelTimes, baseAnchor: baseAnchor,
                     maxSightsPerDay: maxPerDay,
-                    stayBudget: stayBudget
+                    stayBudget: stayBudget, comfortPolicy: comfortPolicy
                 )
                 nextOrders = SpillRepair.repair(dayOrders: nextOrders, spill: spill, context: context).dayOrders
             }
@@ -193,7 +208,8 @@ public enum ItineraryDayBuilder {
                 stops: order, pace: prefs.pace, city: city,
                 weekday: weekdays[dayIndex], dayStart: dayStart, dayEnd: dayEnd,
                 scores: scores, travelTimes: travelTimes,
-                entryAnchor: baseAnchor, exitAnchor: baseAnchor
+                entryAnchor: baseAnchor, exitAnchor: baseAnchor,
+                comfortPolicy: comfortPolicy
             ).scheduled.map {
                 PlannedStop(candidate: $0.candidate, time: clock($0.arrival),
                             stayMin: $0.stayMin, note: nil)
@@ -285,6 +301,11 @@ public enum ItineraryDayBuilder {
             poi.lng = stop.candidate.lng
             poi.plannedTime = stop.time
             poi.stayLabel = stop.stayMin.map(stayLabel)
+            poi.plannedStayMinutes = stop.stayMin
+            let profile = StayDuration.profile(for: stop.candidate)
+            poi.minimumStayMinutes = profile.duration.minimum
+            poi.comfortableStayMinutes = profile.duration.comfortable
+            poi.extendedStayMinutes = profile.duration.extended
             poi.note = stop.note
             items.append(poi)
             order += 1

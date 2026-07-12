@@ -21,6 +21,79 @@ enum RecommendationPresentation {
 }
 
 extension RouteTimelineView {
+    /// 未占用主时间线的景点；只有实际时间和体力允许时再选择。
+    @ViewBuilder
+    func optionalVisitSection(for day: DayPlan) -> some View {
+        let options = day.optionalVisits
+        if !options.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                recommendationHeader(title: "如果还有时间 · 可选景点", count: options.count)
+                ForEach(RecommendationPresentation.visible(options, expanded: showAllOptionalVisits)) {
+                    optionalVisitRow($0)
+                }
+                recommendationToggle(total: options.count, expanded: $showAllOptionalVisits)
+            }
+            .padding(.top, 20)
+        }
+    }
+
+    private func optionalVisitRow(_ opt: OptionalVisitOption) -> some View {
+        let selected = selectionStore.selection?.matchesRecommendation(opt.id) == true
+        return HStack(spacing: 10) {
+            optionThumbnail(photos: opt.photos, icon: "sparkles", color: ItemKind.sight.color)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(opt.name)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Palette.textPrimary)
+                HStack(spacing: 8) {
+                    if let rating = opt.rating { Text("评分 \(String(format: "%.1f", rating))") }
+                    if !opt.subtype.isEmpty { Text(opt.subtype) }
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(Palette.textSecondary)
+                Text("建议游玩 \(durationRange(opt.minimumMinutes, opt.comfortableMinutes))")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.green)
+                if let proximity = RecommendationPresentation.proximity(
+                    meters: opt.distanceMeters, minutes: opt.estimatedMinutes, prefix: "距当天路线") {
+                    Text(proximity).font(.system(size: 11)).foregroundStyle(Palette.textMuted)
+                }
+                optionTags(opt.tags)
+            }
+            Spacer()
+            externalLinkButtons(poiId: opt.id, name: opt.name)
+            Image(systemName: "mappin.circle").font(.system(size: 15)).foregroundStyle(Palette.textMuted)
+        }
+        .padding(10)
+        .background(Palette.fieldBG.opacity(selected ? 0.9 : 0.5), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10)
+            .stroke(selected ? ItemKind.sight.color : .clear, lineWidth: 1.5))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectionStore.selection = .recommendation(
+                MapFocus(id: opt.id, name: opt.name, lat: opt.lat, lng: opt.lng, kind: .sight))
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("在地图查看可选景点：\(opt.name)，建议游玩 \(durationRange(opt.minimumMinutes, opt.comfortableMinutes))")
+        .accessibilityAction {
+            selectionStore.selection = .recommendation(
+                MapFocus(id: opt.id, name: opt.name, lat: opt.lat, lng: opt.lng, kind: .sight))
+        }
+        .padding(.horizontal, 18)
+    }
+
+    private func durationRange(_ minimum: Int, _ comfortable: Int) -> String {
+        func text(_ minutes: Int) -> String {
+            if minutes < 60 { return "\(minutes) 分钟" }
+            let hours = Double(minutes) / 60
+            return hours == hours.rounded()
+                ? "\(Int(hours)) 小时"
+                : String(format: "%.1f 小时", hours)
+        }
+        return "\(text(minimum))～\(text(comfortable))"
+    }
+
     /// 当天「附近美食推荐」（按就近 + 评分，不排进动线，供用户自选）。
     @ViewBuilder
     func foodSection(for day: DayPlan) -> some View {

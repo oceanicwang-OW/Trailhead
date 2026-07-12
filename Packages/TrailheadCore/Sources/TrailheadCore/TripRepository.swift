@@ -7,12 +7,65 @@ import SwiftData
 
 public enum TripRepositoryError: Error, Equatable {
     case missingAdcode
+    case invalidVisitDuration
 }
 
 public struct TripRepository {
     public let context: ModelContext
 
     public init(context: ModelContext) { self.context = context }
+
+    /// 更新当天执行状态。只记录事实，不在此方法中隐式重排行程；调用方可用
+    /// RemainingDayReplanner/NextStopRecommender 预览并在用户确认后替换后缀。
+    public func updateVisitStatus(_ item: PlanItem, status: VisitExecutionStatus,
+                                  at date: Date = .now) throws {
+        guard item.kind != .transit else { return }
+        item.visitStatus = status
+        switch status {
+        case .planned:
+            item.actualStartAt = nil; item.actualEndAt = nil
+        case .visiting:
+            item.actualStartAt = item.actualStartAt ?? date; item.actualEndAt = nil
+        case .completed:
+            item.actualStartAt = item.actualStartAt ?? date; item.actualEndAt = date
+        case .skipped:
+            item.actualEndAt = date
+        }
+        try context.save()
+    }
+
+    /// 用户选择快速/舒适/深度时，更新该点预留并顺延当天尚未开始的后续 POI。
+    public func updateVisitDuration(_ item: PlanItem, in day: DayPlan, minutes: Int) throws {
+        guard item.kind != .transit, minutes >= 5 else { throw TripRepositoryError.invalidVisitDuration }
+        let old = item.plannedStayMinutes ?? item.comfortableStayMinutes ?? minutes
+        let delta = minutes - old
+        item.plannedStayMinutes = minutes
+        item.stayLabel = durationLabel(minutes)
+        guard delta != 0 else { try context.save(); return }
+        for later in day.sortedItems where later.kind != .transit && later.order > item.order
+            && later.visitStatus == .planned {
+            guard let raw = later.plannedTime, let time = clockMinutes(raw) else { continue }
+            later.plannedTime = clock(time + delta)
+        }
+        try context.save()
+    }
+
+    private func clockMinutes(_ raw: String) -> Int? {
+        let parts = raw.split(separator: ":")
+        guard parts.count == 2, let hour = Int(parts[0]), let minute = Int(parts[1]) else { return nil }
+        return hour * 60 + minute
+    }
+
+    private func clock(_ minutes: Int) -> String {
+        let value = max(0, minutes)
+        return String(format: "%02d:%02d", value / 60, value % 60)
+    }
+
+    private func durationLabel(_ minutes: Int) -> String {
+        minutes >= 60
+            ? "约 \(String(format: "%g", (Double(minutes) / 60 * 10).rounded() / 10)) 小时"
+            : "\(minutes) 分钟"
+    }
 
     // MARK: - Create
 

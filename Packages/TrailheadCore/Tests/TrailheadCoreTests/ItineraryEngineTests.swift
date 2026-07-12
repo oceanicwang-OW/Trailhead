@@ -72,13 +72,15 @@ final class ItineraryEngineTests: XCTestCase {
         XCTAssertEqual(trip.status, .ready)
         XCTAssertEqual(trip.sortedDays.count, 1)
 
-        // 4 个 POI + 3 段交通，交替排列；午餐 B 插在第三景点（时刻线 12:00–13:30 段）之后。
+        // 舒适时长与休息缓冲生效；午餐 B 在当天时刻线中顺路插入。
         let items = trip.sortedDays[0].sortedItems
         XCTAssertEqual(items.map(\.kind),
-                       [.sight, .transit, .sight, .transit, .sight, .transit, .food])
-        XCTAssertEqual(items.compactMap(\.poiId), ["A", "C", "D", "B"])
-        XCTAssertEqual(items.first?.plannedTime, "09:00")
-        XCTAssertEqual(items.first?.stayLabel, "约 1.5 小时")
+                       [.sight, .transit, .sight, .transit, .food, .transit, .sight])
+        XCTAssertEqual(items.compactMap(\.poiId), ["A", "C", "B", "D"])
+        XCTAssertEqual(items.first?.plannedTime, "09:30")
+        XCTAssertEqual(items.first?.stayLabel, "约 1.8 小时")
+        XCTAssertEqual(items.first?.minimumStayMinutes, 60)
+        XCTAssertEqual(items.first?.comfortableStayMinutes, 105)
 
         // 进度推进到完成
         XCTAssertEqual(engine.stage, .done)
@@ -176,7 +178,7 @@ final class ItineraryEngineTests: XCTestCase {
         XCTAssertEqual(Set(poiIDs), ["S1"])
         XCTAssertEqual(trip.lodgingOptions.map(\.id), ["H1", "H2"]) // 按评分降序成清单
         XCTAssertEqual(trip.lodgingOptions.first?.rating, 4.8)
-        XCTAssertEqual(trip.sortedDays[0].sortedItems.first?.plannedTime, "09:15")
+        XCTAssertEqual(trip.sortedDays[0].sortedItems.first?.plannedTime, "09:45")
         XCTAssertTrue(engine.diagnostics.usedLodgingAnchor)
     }
 

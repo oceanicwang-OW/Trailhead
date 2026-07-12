@@ -95,7 +95,8 @@ public enum GlobalItineraryOptimizer {
                 stops: routed, pace: prefs.pace, city: city,
                 weekday: weekdays.indices.contains(dayIndex) ? weekdays[dayIndex] : nil,
                 dayStart: ItineraryDayBuilder.dayStart, dayEnd: ItineraryDayBuilder.dayEnd,
-                scores: scores, entryAnchor: baseAnchor, exitAnchor: baseAnchor
+                scores: scores, entryAnchor: baseAnchor, exitAnchor: baseAnchor,
+                comfortPolicy: DayComfortPolicy.policy(for: prefs.pace)
             )
             total += simulation.scheduled.reduce(0) {
                 $0 + 100 * ScheduleSimulator.score($1.candidate, scores)

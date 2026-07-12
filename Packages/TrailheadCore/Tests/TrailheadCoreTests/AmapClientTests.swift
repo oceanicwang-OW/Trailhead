@@ -9,6 +9,21 @@ import XCTest
 // MockURLProtocol 定义在 TestSupport.swift（多个测试共享）。
 
 final class AmapClientTests: XCTestCase {
+    func testParsePOIPreservesGenericVisitMetadataWhenAvailable() throws {
+        let raw: [String: Any] = [
+            "id": "P", "name": "大型景区", "location": "116.4,39.9",
+            "typecode": "110000", "type": "风景名胜;大型综合景区",
+            "parent": "ROOT",
+            "children": [["id": "C1"], ["id": "C2"]],
+            "business": ["area": "200000", "reservation": "1", "queue_risk": "80"],
+        ]
+        let candidate = try XCTUnwrap(AmapClient.parsePOI(raw))
+        XCTAssertEqual(candidate.visitMetadata.providerParentID, "ROOT")
+        XCTAssertEqual(candidate.visitMetadata.childPOICount, 2)
+        XCTAssertEqual(candidate.visitMetadata.areaSquareMeters, 200_000)
+        XCTAssertEqual(candidate.visitMetadata.requiresReservation, true)
+        XCTAssertEqual(candidate.visitMetadata.queueRiskScore, 0.8)
+    }
 
     private func makeClient(key: String? = "TESTKEY") -> AmapClient {
         AmapClient(session: TestSupport.mockSession(), keyProvider: { key }, minRequestInterval: 0)

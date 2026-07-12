@@ -91,11 +91,14 @@ public struct POICandidate: Identifiable, Hashable, Sendable {
     public var avgPrice: Int?
     public var tags: [String]       // 特色标签：餐厅常为推荐菜、酒店为环境/服务（business.tag/rectag）
     public var photos: [String]     // 图片 URL（show_fields=photos）
+    /// 可选的结构化游览元数据。nil 表示数据源没有提供，不能等同于 0/false。
+    public var visitMetadata: POIVisitMetadata
 
     public init(id: String, name: String, kind: ItemKind, subtype: String,
                 lat: Double, lng: Double, rating: Double? = nil,
                 openHours: String? = nil, avgPrice: Int? = nil,
-                tags: [String] = [], photos: [String] = []) {
+                tags: [String] = [], photos: [String] = [],
+                visitMetadata: POIVisitMetadata = .init()) {
         self.id = id
         self.name = name
         self.kind = kind
@@ -107,6 +110,7 @@ public struct POICandidate: Identifiable, Hashable, Sendable {
         self.avgPrice = avgPrice
         self.tags = tags
         self.photos = photos
+        self.visitMetadata = visitMetadata
     }
 }
 

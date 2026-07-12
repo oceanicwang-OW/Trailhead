@@ -43,6 +43,7 @@ struct RouteTimelineView: View {
     @State private var applyingReplacementItemID: UUID?
     @State private var regeneratingDayID: UUID?
     @State var showAllFoodOptions = false
+    @State var showAllOptionalVisits = false
     @State var showAllLodgingOptions = false
 
     private var day: DayPlan? {
@@ -58,6 +59,7 @@ struct RouteTimelineView: View {
                 if let day {
                     routeSectionLabel
                     timeline(for: day)
+                    optionalVisitSection(for: day)
                     foodSection(for: day)
                 }
                 lodgingSection
@@ -78,6 +80,7 @@ struct RouteTimelineView: View {
         }
         .onChange(of: trip.id) {
             showAllFoodOptions = false
+            showAllOptionalVisits = false
             showAllLodgingOptions = false
         }
     }
@@ -242,6 +245,34 @@ struct RouteTimelineView: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel("在地图查看路线地点：\(item.name ?? item.kind.label)")
             .accessibilityAction { selectionStore.selection = .itinerary(item.id) }
+            .contextMenu {
+                if let minimum = item.minimumStayMinutes {
+                    Button("快速逛逛 · \(minimum) 分钟", systemImage: "hare") {
+                        updateDuration(item, in: day, minutes: minimum)
+                    }
+                }
+                if let comfortable = item.comfortableStayMinutes {
+                    Button("舒适游览 · \(comfortable) 分钟", systemImage: "figure.walk") {
+                        updateDuration(item, in: day, minutes: comfortable)
+                    }
+                }
+                if let extended = item.extendedStayMinutes {
+                    Button("深度体验 · \(extended) 分钟", systemImage: "binoculars") {
+                        updateDuration(item, in: day, minutes: extended)
+                    }
+                }
+                Divider()
+                if item.visitStatus != .visiting {
+                    Button("开始游玩", systemImage: "play.fill") { updateVisit(item, status: .visiting) }
+                }
+                if item.visitStatus != .completed {
+                    Button("完成游玩", systemImage: "checkmark.circle") { updateVisit(item, status: .completed) }
+                }
+                Button("跳过这个地点", systemImage: "forward.end") { updateVisit(item, status: .skipped) }
+                if item.visitStatus != .planned {
+                    Button("恢复为未开始", systemImage: "arrow.uturn.backward") { updateVisit(item, status: .planned) }
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 if isEditing {
                     moveControls(for: item, day: day)
@@ -249,6 +280,22 @@ struct RouteTimelineView: View {
                         .padding(.trailing, 22)
                 }
             }
+    }
+
+    private func updateVisit(_ item: PlanItem, status: VisitExecutionStatus) {
+        do {
+            try TripRepository(context: modelContext).updateVisitStatus(item, status: status)
+        } catch {
+            editError = error.localizedDescription
+        }
+    }
+
+    private func updateDuration(_ item: PlanItem, in day: DayPlan, minutes: Int) {
+        do {
+            try TripRepository(context: modelContext).updateVisitDuration(item, in: day, minutes: minutes)
+        } catch {
+            editError = error.localizedDescription
+        }
     }
 
     private func moveControls(for item: PlanItem, day: DayPlan) -> some View {

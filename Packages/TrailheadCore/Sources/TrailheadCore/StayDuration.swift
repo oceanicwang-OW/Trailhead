@@ -1,19 +1,19 @@
 //  StayDuration.swift
-//  停留时长先验（PDR §4.2）。把「每点待多久」从大模型的 stay_min 收回为**确定性规则**：
-//  按 kind/subtype 取基准分钟，再按 TripPrefs.pace 缩放（紧凑↔随性）。纯函数，便于单测。
+//  停留时长兼容入口。默认走 VisitProfileResolver 的通用范围/特征模型；Priors 仅保留给
+//  既有调用方和定向测试，不参与正常行程生成。
 
 import Foundation
 
 public enum StayDuration {
     /// 各类停留基准分钟（可配）。subtype 命中 museum/nature 优先于 kind。
-    public struct Priors: Sendable {
+    public struct Priors: Equatable, Sendable {
         public var sight: Int      // 一般景点
         public var museum: Int     // 博物馆/展馆
         public var nature: Int     // 公园/自然
         public var food: Int       // 餐饮
         public var other: Int      // 其它（非景非食非住）
-        public init(sight: Int = 90, museum: Int = 120, nature: Int = 120,
-                    food: Int = 60, other: Int = 60) {
+        public init(sight: Int = 105, museum: Int = 165, nature: Int = 210,
+                    food: Int = 75, other: Int = 60) {
             self.sight = sight; self.museum = museum; self.nature = nature
             self.food = food; self.other = other
         }
@@ -33,9 +33,17 @@ public enum StayDuration {
         }
     }
 
-    /// 停留分钟 = 基准（kind/subtype）× pace 系数，四舍五入取整。
+    /// 默认配置使用通用弹性时长模型；显式自定义 Priors 保留旧的可预测覆盖语义。
     public static func duration(for c: POICandidate, pace: Pace, priors: Priors = .init()) -> Int {
-        Int((Double(baseMinutes(for: c, priors: priors)) * paceFactor(pace)).rounded())
+        if priors == Priors() {
+            return VisitProfileResolver.selectedMinutes(for: c, pace: pace)
+        }
+        return Int((Double(baseMinutes(for: c, priors: priors)) * paceFactor(pace)).rounded())
+    }
+
+    public static func profile(for candidate: POICandidate,
+                               override: VisitDurationOverride? = nil) -> VisitProfile {
+        VisitProfileResolver.resolve(candidate, override: override)
     }
 
     /// 基准分钟：餐饮恒取 food；景点内再按 subtype 细分 museum/nature，否则 sight；其余取 other。

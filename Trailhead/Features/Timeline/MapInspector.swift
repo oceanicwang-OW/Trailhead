@@ -130,12 +130,21 @@ struct MapInspector: View {
     }
 
     private func focusPin(_ f: MapFocus) -> some View {
-        Image(systemName: f.kind == .food ? "fork.knife" : "bed.double.fill")
+        Image(systemName: focusIcon(for: f.kind))
             .font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
             .frame(width: 30, height: 30)
             .background(f.kind.color, in: Circle())
             .overlay(Circle().stroke(.white, lineWidth: 2.5))
             .shadow(radius: 3, y: 1)
+    }
+
+    private func focusIcon(for kind: ItemKind) -> String {
+        switch kind {
+        case .food: return "fork.knife"
+        case .lodging: return "bed.double.fill"
+        case .sight: return "sparkles"
+        case .transit: return "tram.fill"
+        }
     }
 
     /// 把相机移到当天所有 POI 的外接区域（无坐标则不动）。

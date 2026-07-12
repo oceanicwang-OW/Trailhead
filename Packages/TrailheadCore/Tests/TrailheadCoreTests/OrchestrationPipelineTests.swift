@@ -250,7 +250,7 @@ final class OrchestrationPipelineTests: XCTestCase {
         XCTAssertEqual(Set(ids).intersection(["s1", "s2"]), ["s1", "s2"])   // 两景点都在
         let times = perDay[0].compactMap { minutes($0.time) }
         XCTAssertEqual(times, times.sorted())
-        XCTAssertEqual(perDay[0].first?.time, "09:00")                       // 首点从 dayStart 起
+        XCTAssertEqual(perDay[0].first?.time, "09:30") // 进入缓冲后开始正式游览
     }
 
     func testPlannerUsesCityTransitEstimate() async throws {
@@ -263,8 +263,8 @@ final class OrchestrationPipelineTests: XCTestCase {
             prefs: TripPrefs(pace: .relaxed), candidates: stops, days: 1,
             llm: StubLLMProvider(), city: "110100")
 
-        XCTAssertEqual(driving[0].last?.time, "10:39")
-        XCTAssertEqual(transit[0].last?.time, "10:46")
+        XCTAssertEqual(driving[0].last?.time, "12:34")
+        XCTAssertEqual(transit[0].last?.time, "12:41")
     }
 
     func testRealRouteReconciliationRemovesInfeasibleStop() async throws {

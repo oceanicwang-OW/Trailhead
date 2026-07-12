@@ -11,11 +11,7 @@ import Foundation
 public enum DayClusterer {
     /// 每天景点数上限（B2，可配的 pace 映射）：紧凑多、随性少。
     public static func maxSights(for pace: Pace) -> Int {
-        switch pace {
-        case .tight:   return 5
-        case .relaxed: return 4
-        case .casual:  return 3
-        }
+        DayComfortPolicy.policy(for: pace).smallPointAllowance
     }
 
     /// 时间预算比例 α（D7，可配）：Σ停留 ≤ α × (dayEnd − dayStart)，剩余留给通勤与餐饮。
@@ -30,6 +26,7 @@ public enum DayClusterer {
                                scores: [String: Double] = [:],
                                stayMinutes: [String: Int] = [:],
                                stayBudget: Int? = nil,
+                               dayAnchorIDs: Set<String> = [],
                                seedOffset: Int = 0) -> [[POICandidate]] {
         guard days > 0 else { return [] }
         guard !sights.isEmpty else { return Array(repeating: [], count: days) }
@@ -62,22 +59,29 @@ public enum DayClusterer {
         var buckets = Array(repeating: [Int](), count: k)
         var counts = [Int](repeating: 0, count: k)
         var stayLoad = [Int](repeating: 0, count: k)
-        func isFull(_ c: Int, adding stay: Int) -> Bool {
+        var hasDayAnchor = [Bool](repeating: false, count: k)
+        func isFull(_ c: Int, adding candidate: POICandidate, stay: Int) -> Bool {
+            if hasDayAnchor[c] { return true }
+            if dayAnchorIDs.contains(candidate.id), counts[c] > 0 { return true }
             if counts[c] >= capacity { return true }
             if let budget = stayBudget, stayLoad[c] + stay > budget { return true }
             return false
         }
         let order = (0..<n).sorted {
+            let leftAnchor = dayAnchorIDs.contains(sights[$0].id)
+            let rightAnchor = dayAnchorIDs.contains(sights[$1].id)
+            if leftAnchor != rightAnchor { return leftAnchor && !rightAnchor }
             let (ra, rb) = (regret($0, pts, centroids), regret($1, pts, centroids))
             return ra == rb ? sights[$0].id < sights[$1].id : ra > rb
         }
         for i in order {
             let stay = stayMinutes[sights[i].id] ?? 0
             let ranked = (0..<k).sorted { dist(pts[i], centroids[$0]) < dist(pts[i], centroids[$1]) }
-            let target = ranked.first(where: { !isFull($0, adding: stay) }) ?? ranked[0]
+            let target = ranked.first(where: { !isFull($0, adding: sights[i], stay: stay) }) ?? ranked[0]
             buckets[target].append(i)
             counts[target] += 1
             stayLoad[target] += stay
+            hasDayAnchor[target] = hasDayAnchor[target] || dayAnchorIDs.contains(sights[i].id)
         }
 
         // 天序：对簇质心跑一次 NN 路径，使相邻两天地理相邻；不足天数尾部补轻量天。

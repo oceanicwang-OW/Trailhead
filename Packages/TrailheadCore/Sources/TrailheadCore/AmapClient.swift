@@ -273,6 +273,8 @@ public struct AmapClient: POIDataSource {
               let loc = (poi["location"] as? String).flatMap(parseLngLat) else { return nil }
         let typeCode = (poi["typecode"] as? String) ?? ""
         let business = poi["business"] as? [String: Any]   // 可能缺失/为数组 → nil，不阻塞
+        let parentID = (poi["parent"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let children = poi["children"] as? [[String: Any]]
         return POICandidate(
             id: id, name: name,
             kind: AmapCategory.kind(forTypeCode: typeCode),
@@ -282,7 +284,19 @@ public struct AmapClient: POIDataSource {
             openHours: business?["opentime2"] as? String ?? business?["opentime"] as? String,
             avgPrice: int(business?["cost"]),
             tags: parseTags(business),
-            photos: (poi["photos"] as? [[String: Any]])?.compactMap { $0["url"] as? String } ?? []
+            photos: (poi["photos"] as? [[String: Any]])?.compactMap { $0["url"] as? String } ?? [],
+            visitMetadata: POIVisitMetadata(
+                providerParentID: parentID,
+                areaSquareMeters: double(business?["area"]),
+                childPOICount: children?.count,
+                entranceCount: int(business?["entrance_count"]),
+                requiresReservation: bool(business?["reservation"]),
+                hasSecurityCheck: bool(business?["security_check"]),
+                requiresSpecialAccess: bool(business?["special_access"]),
+                hasInternalTransit: bool(business?["internal_transit"]),
+                popularityScore: normalizedScore(business?["popularity"]),
+                queueRiskScore: normalizedScore(business?["queue_risk"])
+            )
         )
     }
 
@@ -321,6 +335,27 @@ public struct AmapClient: POIDataSource {
         if let d = any as? Double { return d }
         if let s = any as? String { return Double(s) }
         if let i = any as? Int { return Double(i) }
+        return nil
+    }
+
+    static func bool(_ any: Any?) -> Bool? {
+        if let value = any as? Bool { return value }
+        if let value = int(any) { return value != 0 }
+        if let value = any as? String {
+            switch value.lowercased() {
+            case "true", "yes", "是", "需要": return true
+            case "false", "no", "否", "不需要": return false
+            default: return nil
+            }
+        }
+        return nil
+    }
+
+    static func normalizedScore(_ any: Any?) -> Double? {
+        guard let value = double(any) else { return nil }
+        if (0...1).contains(value) { return value }
+        if (0...5).contains(value) { return value / 5 }
+        if (0...100).contains(value) { return value / 100 }
         return nil
     }
 }
