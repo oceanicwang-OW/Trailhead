@@ -45,6 +45,17 @@ struct NewTripDraft {
         return preferences
     }
 
+    var planningIntent: TripIntent {
+        var states: [IntentPath: IntentFieldState] = [:]
+        for path in [IntentPath.destinationName, .days, .preferenceTags, .preferenceCuisines,
+                     .preferenceLodgingType, .preferencePace, .preferenceBudget] {
+            states[path] = .init(source: .userExplicit)
+        }
+        return TripIntent(destination: .init(name: trimmedDestination),
+                          startDate: startDate, days: days,
+                          preferences: preferences, fieldStates: states)
+    }
+
     var estimate: GenerationEstimate {
         GenerationEstimate(days: days)
     }

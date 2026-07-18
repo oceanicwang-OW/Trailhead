@@ -30,7 +30,7 @@ public struct ChatMessage: Equatable, Sendable {
 
 // MARK: - DeepSeekClient
 
-public struct DeepSeekClient: LLMProvider {
+public struct DeepSeekClient: LLMProvider, IntentUnderstandingProvider {
     private let base = URL(string: "https://api.deepseek.com")!
     private let model: String
     private let timeout: TimeInterval
@@ -84,6 +84,17 @@ public struct DeepSeekClient: LLMProvider {
         let messages = PromptBuilder.noteMessages(prefs: prefs, stops: stops)
         let content = try await complete(messages: messages, jsonMode: true)
         return Data(content.utf8)
+    }
+
+    /// 对话式规划：只提取结构化意图 patch 和地点 mention，不规划路线或生成 POI id。
+    public func interpret(_ request: IntentInterpretationRequest) async throws -> IntentInterpretationResponse {
+        let content = try await complete(messages: IntentPromptBuilder.messages(for: request), jsonMode: true)
+        do {
+            return try JSONDecoder().decode(IntentInterpretationResponse.self,
+                                            from: ItineraryParser.stripFences(Data(content.utf8)))
+        } catch {
+            throw LLMError.decoding("需求 JSON 解析失败：\(error.localizedDescription)")
+        }
     }
 
     // MARK: - 单次请求

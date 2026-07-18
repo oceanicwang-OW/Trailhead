@@ -66,6 +66,8 @@ public enum ScheduleSimulator {
                                 travelTimes: RouteTimeMatrix = [:],
                                 entryAnchor: POICandidate? = nil,
                                 exitAnchor: POICandidate? = nil,
+                                fixedArrivals: [String: Int] = [:],
+                                minimumStays: [String: Int] = [:],
                                 comfortPolicy: DayComfortPolicy? = nil) -> DaySimulation {
         guard !stops.isEmpty else { return DaySimulation(scheduled: []) }
 
@@ -82,7 +84,8 @@ public enum ScheduleSimulator {
             switch forwardPass(order, pace: pace, city: city, weekday: weekday,
                                dayStart: dayStart, dayEnd: dayEnd, priors: priors, maxWait: maxWait,
                                travelTimes: travelTimes, entryAnchor: entryAnchor,
-                               exitAnchor: exitAnchor, comfortPolicy: comfortPolicy) {
+                               exitAnchor: exitAnchor, fixedArrivals: fixedArrivals,
+                               minimumStays: minimumStays, comfortPolicy: comfortPolicy) {
             case .success(let scheduled):
                 return DaySimulation(scheduled: scheduled, spilled: spilled)
 
@@ -142,6 +145,7 @@ public enum ScheduleSimulator {
                                     priors: StayDuration.Priors, maxWait: Int,
                                     travelTimes: RouteTimeMatrix,
                                     entryAnchor: POICandidate?, exitAnchor: POICandidate?,
+                                    fixedArrivals: [String: Int], minimumStays: [String: Int],
                                     comfortPolicy: DayComfortPolicy?) -> PassResult {
         var t = dayStart
         var prev = entryAnchor
@@ -156,13 +160,19 @@ public enum ScheduleSimulator {
             let profile = comfortPolicy.map { _ in StayDuration.profile(for: stop) }
             let access = profile?.accessBufferMin ?? 0
             let exit = profile?.exitBufferMin ?? 0
-            let stay = StayDuration.duration(for: stop, pace: pace, priors: priors)
+            let stay = max(StayDuration.duration(for: stop, pace: pace, priors: priors),
+                           minimumStays[stop.id] ?? 0)
             if let policy = comfortPolicy, !out.isEmpty, stop.kind != .food,
                continuousActivity + travel + access + stay > policy.continuousActivityLimitMin {
                 t += policy.restBufferMin
                 continuousActivity = 0
             }
             var arrival = t + travel + access
+
+            if let fixed = fixedArrivals[stop.id] {
+                if arrival > fixed { return .missedWindow(i) }
+                arrival = fixed
+            }
 
             if let windows = OpenHoursParser.schedule(stop.openHours).windows(on: weekday) {
                 if windows.isEmpty { return .closedDay(i) }

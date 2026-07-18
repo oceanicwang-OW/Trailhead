@@ -19,7 +19,7 @@ public struct POICache {
 
     /// 召回逻辑版本号。改了召回算法（类目→关键词、归一、筛选等）就 +1，
     /// 旧缓存键自动失效、不再命中——无需用户手动「清除离线缓存」。
-    static let schema = "v3"
+    static let schema = "v4"
     static func scoped(_ category: String) -> String { "\(schema):\(category)" }
 
     /// 写入/更新一批候选（按 adcode + category）。同键覆盖并刷新时间戳。

@@ -169,8 +169,15 @@ public struct AmapClient: POIDataSource {
                     "show_fields": "business,photos", "page_size": "\(Self.pageSize)", "page_num": "\(page)",
                 ])
                 let pois = json["pois"] as? [[String: Any]] ?? []
-                for poi in pois {
-                    guard let candidate = Self.parsePOI(poi), seen.insert(candidate.id).inserted else { continue }
+                for (index, poi) in pois.enumerated() {
+                    guard var candidate = Self.parsePOI(poi), seen.insert(candidate.id).inserted else { continue }
+                    // place/text 已按相关性/热度返回。v5 没有稳定的评论数排序字段，
+                    // 因此在 business.popularity 缺失时把召回名次保存为知名度代理信号。
+                    if candidate.visitMetadata.popularityScore == nil {
+                        candidate.visitMetadata.popularityScore = Self.recallPopularity(
+                            page: page, index: index, pages: pagesPerCategory
+                        )
+                    }
                     out.append(candidate)
                 }
                 if pois.count < Self.pageSize { break }   // 最后一页，停
@@ -187,8 +194,11 @@ public struct AmapClient: POIDataSource {
         ])
         var seen = Set<String>()
         var out: [POICandidate] = []
-        for poi in (json["pois"] as? [[String: Any]] ?? []) {
-            guard let candidate = Self.parsePOI(poi), seen.insert(candidate.id).inserted else { continue }
+        for (index, poi) in (json["pois"] as? [[String: Any]] ?? []).enumerated() {
+            guard var candidate = Self.parsePOI(poi), seen.insert(candidate.id).inserted else { continue }
+            if candidate.visitMetadata.popularityScore == nil {
+                candidate.visitMetadata.popularityScore = Self.recallPopularity(page: 1, index: index, pages: 1)
+            }
             out.append(candidate)
         }
         return out
@@ -286,6 +296,7 @@ public struct AmapClient: POIDataSource {
             tags: parseTags(business),
             photos: (poi["photos"] as? [[String: Any]])?.compactMap { $0["url"] as? String } ?? [],
             visitMetadata: POIVisitMetadata(
+                sourceTypeCode: typeCode.isEmpty ? nil : typeCode,
                 providerParentID: parentID,
                 areaSquareMeters: double(business?["area"]),
                 childPOICount: children?.count,
@@ -298,6 +309,14 @@ public struct AmapClient: POIDataSource {
                 queueRiskScore: normalizedScore(business?["queue_risk"])
             )
         )
+    }
+
+    /// 将关键词召回位置映射到 (0, 1]。越靠前表示越具城市代表性/搜索热度；
+    /// 仅作为 business.popularity 缺失时的代理，不覆盖数据源显式热度。
+    static func recallPopularity(page: Int, index: Int, pages: Int) -> Double {
+        let capacity = max(1, pages * pageSize)
+        let zeroBasedRank = max(0, page - 1) * pageSize + max(0, index)
+        return min(1, max(0.01, 1 - Double(zeroBasedRank) / Double(capacity)))
     }
 
     /// business.tag（餐厅常为推荐菜、酒店为环境/服务）+ rectag（人气标签），

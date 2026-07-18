@@ -120,4 +120,23 @@ final class DayClustererTests: XCTestCase {
         let out = DayClusterer.cluster(sights: [m1, m2, s], days: 2, maxSightsPerDay: 4)
         XCTAssertTrue(out.contains { Set($0.map(\.id)) == ["m1", "m2"] })
     }
+
+    func testDailyAnchorsAreDistributedAcrossDays() {
+        let landmarkA = poi("landmark-a", 0, 0)
+        let landmarkB = poi("landmark-b", 0.001, 0.001)
+        let nearbyA = poi("near-a", 0.002, 0.002)
+        let remote = poi("remote", 20, 20)
+        let scores = ["landmark-a": 8.0, "landmark-b": 7.5, "near-a": 5.0, "remote": 4.0]
+
+        let out = DayClusterer.cluster(
+            sights: [landmarkA, landmarkB, nearbyA, remote], days: 2, maxSightsPerDay: 3,
+            scores: scores, dayAnchorIDs: ["landmark-a", "landmark-b"]
+        )
+
+        XCTAssertTrue(out.allSatisfy { day in
+            day.filter { ["landmark-a", "landmark-b"].contains($0.id) }.count == 1
+        })
+        XCTAssertEqual(out.map(\.count).sorted(), [2, 2],
+                       "核心景点只限制同日核心点数量，不应阻止附近普通景点补入")
+    }
 }

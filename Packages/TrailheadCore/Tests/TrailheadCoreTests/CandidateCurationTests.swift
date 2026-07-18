@@ -34,8 +34,7 @@ final class CandidateCurationTests: XCTestCase {
         XCTAssertEqual(out.map(\.id), ["rated", "none"])
     }
 
-    /// P0 止血：无评分（常是招牌景点）不再被当作 0 分沉底，而是按中性分 4.0 参与排序，
-    /// 因此应排在评分明显更低的同类点之前——对齐 PromptBuilder.unratedScore。
+    /// 无评分不按 0 分沉底，仍应排在评分明显偏低的同类点之前。
     func testUnratedOutranksLowerRatedSameKind() {
         let cands = [poi("low", .sight, 3.1), poi("none", .sight, nil)]
         let out = CandidateCuration.curate(cands, limits: .init(sights: 5, food: 0, other: 0))
@@ -103,5 +102,81 @@ final class CandidateCurationTests: XCTestCase {
         )
 
         XCTAssertEqual(out.map(\.id), ["museum-a", "park"])
+    }
+
+    func testPopularLandmarkOutranksHigherRatedObscureSight() {
+        let obscure = POICandidate(
+            id: "obscure", name: "社区小公园", kind: .sight, subtype: "公园",
+            lat: 0, lng: 0, rating: 4.9,
+            visitMetadata: .init(sourceTypeCode: "110000", popularityScore: 0.08)
+        )
+        let landmark = POICandidate(
+            id: "landmark", name: "城市地标博物院", kind: .sight, subtype: "博物馆",
+            lat: 0, lng: 0, rating: 4.5,
+            visitMetadata: .init(sourceTypeCode: "110000", popularityScore: 0.95)
+        )
+
+        let out = CandidateCuration.curate(
+            [obscure, landmark], limits: .init(sights: 2, food: 0, other: 0)
+        )
+
+        XCTAssertEqual(out.map(\.id), ["landmark", "obscure"])
+    }
+
+    func testKnownShoppingCategoryDoesNotEnterPrimarySightQuota() {
+        let attraction = POICandidate(
+            id: "attraction", name: "城市博物馆", kind: .sight, subtype: "博物馆",
+            lat: 0, lng: 0, rating: 4.2,
+            visitMetadata: .init(sourceTypeCode: "110000", popularityScore: 0.6)
+        )
+        let mall = POICandidate(
+            id: "mall", name: "购物中心", kind: .sight, subtype: "购物中心",
+            lat: 0, lng: 0, rating: 5.0,
+            visitMetadata: .init(sourceTypeCode: "060100", popularityScore: 1)
+        )
+
+        let out = CandidateCuration.curate(
+            [mall, attraction], limits: .init(sights: 1, food: 0, other: 0)
+        )
+
+        XCTAssertEqual(out.map(\.id), ["attraction"])
+    }
+
+    func testBusinessResidentialCategoryDoesNotEnterPrimarySightQuota() {
+        let attraction = POICandidate(
+            id: "attraction", name: "城市博物馆", kind: .sight, subtype: "博物馆",
+            lat: 0, lng: 0, rating: 4.2,
+            visitMetadata: .init(sourceTypeCode: "110000", popularityScore: 0.6)
+        )
+        let office = POICandidate(
+            id: "office", name: "城市中心写字楼", kind: .sight, subtype: "商务写字楼",
+            lat: 0, lng: 0, rating: 5.0,
+            visitMetadata: .init(sourceTypeCode: "120200", popularityScore: 1)
+        )
+
+        let out = CandidateCuration.curate(
+            [office, attraction], limits: .init(sights: 1, food: 0, other: 8)
+        )
+
+        XCTAssertEqual(out.map(\.id), ["attraction"])
+    }
+
+    func testMuseumFromScienceEducationCategoryRemainsPrimaryAttraction() {
+        let museum = POICandidate(
+            id: "museum", name: "城市博物馆", kind: .sight, subtype: "博物馆",
+            lat: 0, lng: 0, rating: 4.6,
+            visitMetadata: .init(sourceTypeCode: "140100", popularityScore: 0.8)
+        )
+        let school = POICandidate(
+            id: "school", name: "城市中学", kind: .sight, subtype: "中学",
+            lat: 0, lng: 0, rating: 4.9,
+            visitMetadata: .init(sourceTypeCode: "141200", popularityScore: 1)
+        )
+
+        let out = CandidateCuration.curate(
+            [school, museum], limits: .init(sights: 2, food: 0, other: 8)
+        )
+
+        XCTAssertEqual(out.map(\.id), ["museum"])
     }
 }

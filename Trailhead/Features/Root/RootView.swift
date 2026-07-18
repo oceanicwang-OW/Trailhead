@@ -12,12 +12,17 @@ struct RootView: View {
     @Query(sort: \Trip.createdAt, order: .reverse) private var trips: [Trip]
 
     @StateObject private var engine: ItineraryEngine
+    private let poiSource: AmapClient
+    private let intentProvider: DeepSeekClient
 
     @State private var selection: Trip?
     @State private var dayIndex = 0
     @StateObject private var mapSelection = MapSelectionStore()
     @State private var showNewTrip = false
     @State private var tripDraft: NewTripDraft
+    @State private var assistantCoordinator: PlanningCoordinator?
+    @State private var planningCoordinatorCache: PlanningCoordinator?
+    @State private var savedPlanningSession: PlanningSession?
 
     // 生成流程状态
     @State private var generating = false
@@ -31,9 +36,15 @@ struct RootView: View {
 
     init(container: ModelContainer) {
         // Release 仅从 Keychain 取 key；DEBUG 额外支持环境变量和本地开发配置文件。
+        let source = AmapClient.live()
+        let llm = DeepSeekClient.live()
+        poiSource = source
+        intentProvider = llm
         _engine = StateObject(wrappedValue: ItineraryEngine(
-            source: AmapClient.live(), llm: DeepSeekClient.live(), context: container.mainContext))
+            source: source, llm: llm, context: container.mainContext))
         _tripDraft = State(initialValue: NewTripDraft(days: NewTripDraft.rememberedDays()))
+        _assistantCoordinator = State(initialValue: nil)
+        _savedPlanningSession = State(initialValue: PlanningSessionStore().load())
     }
 
     var body: some View {
@@ -42,6 +53,10 @@ struct RootView: View {
                 if quotaBanner { quotaBannerView }
             }
             .sheet(isPresented: $generating) { generatingSheet }
+            .sheet(item: $assistantCoordinator, onDismiss: assistantDidDismiss) { coordinator in
+                PlanningAssistantView(coordinator: coordinator,
+                                      onGenerate: startConversationalGeneration)
+            }
             .alert("生成失败", isPresented: errorBinding) {
                 Button("重试生成") { retryGeneration() }
                 Button("返回表单", role: .cancel) { returnToDraft() }
@@ -96,7 +111,8 @@ struct RootView: View {
                 if let trip = current {
                     RouteTimelineView(trip: trip,
                                       selectedDayIndex: $dayIndex,
-                                      selectionStore: mapSelection)
+                                      selectionStore: mapSelection,
+                                      onAdjustRequirements: startAssistant)
                         .navigationTitle(trip.city)
                         .navigationSubtitle(trip.subtitle)
                 } else { emptyState }
@@ -124,7 +140,7 @@ struct RootView: View {
             } else { Color(Palette.canvasBG) }
         }
         .sheet(isPresented: $showNewTrip) {
-            NewTripView(draft: $tripDraft, onGenerate: startGeneration)
+            newTripView
         }
     }
     #endif
@@ -140,7 +156,8 @@ struct RootView: View {
                         RouteTimelineView(trip: trip,
                                           selectedDayIndex: $dayIndex,
                                           selectionStore: mapSelection,
-                                          gutter: Metric.gutterCompact)
+                                          gutter: Metric.gutterCompact,
+                                          onAdjustRequirements: startAssistant)
                             .navigationTitle("\(trip.city) · D\(dayIndex + 1)")
                             .navigationBarTitleDisplayMode(.inline)
                     } else { emptyState }
@@ -149,7 +166,7 @@ struct RootView: View {
             .tabItem { Label("行程", systemImage: "list.bullet.indent") }
 
             NavigationStack {
-                NewTripView(draft: $tripDraft, onGenerate: startGeneration)
+                newTripView
             }
             .tabItem { Label("新建", systemImage: "plus.circle") }
 
@@ -176,12 +193,103 @@ struct RootView: View {
 
     private struct GenerationRequest {
         let draft: NewTripDraft
+        let intent: TripIntent?
+    }
+
+    private var newTripView: some View {
+        NewTripView(
+            draft: $tripDraft,
+            savedSession: savedPlanningSession,
+            onGenerate: startGeneration,
+            onChat: startAssistant,
+            onResumeChat: resumeAssistant,
+            onGenerateSaved: generateSavedSession,
+            onClearSaved: clearSavedSession
+        )
     }
 
     private func startGeneration(_ draft: NewTripDraft) {
         draft.rememberDays()
-        let request = GenerationRequest(draft: draft)
+        let request = GenerationRequest(draft: draft, intent: nil)
         lastGenerationRequest = request
+        runGeneration(request)
+    }
+
+    private func startAssistant(_ draft: NewTripDraft) {
+        showNewTrip = false
+        let store = PlanningSessionStore()
+        let saved = store.load()
+        let canResume = saved?.intent.destination.name == draft.planningIntent.destination.name
+            && saved?.state != .completed && saved?.state != .cancelled
+        let coordinator = canResume
+            ? PlanningCoordinator(session: saved!, provider: intentProvider,
+                                  resolver: POIResolver(source: poiSource), source: poiSource, store: store)
+            : PlanningCoordinator(intent: draft.planningIntent, provider: intentProvider,
+                                  resolver: POIResolver(source: poiSource), source: poiSource, store: store)
+        planningCoordinatorCache = coordinator
+        assistantCoordinator = coordinator
+    }
+
+    private func resumeAssistant(_ session: PlanningSession) {
+        showNewTrip = false
+        let coordinator = PlanningCoordinator(
+            session: session,
+            provider: intentProvider,
+            resolver: POIResolver(source: poiSource),
+            source: poiSource
+        )
+        planningCoordinatorCache = coordinator
+        assistantCoordinator = coordinator
+    }
+
+    private func generateSavedSession(_ session: PlanningSession) {
+        let coordinator = PlanningCoordinator(
+            session: session,
+            provider: intentProvider,
+            resolver: POIResolver(source: poiSource),
+            source: poiSource
+        )
+        planningCoordinatorCache = coordinator
+        startConversationalGeneration(session.intent)
+    }
+
+    private func clearSavedSession() {
+        planningCoordinatorCache?.discardDraft()
+        PlanningSessionStore().delete()
+        planningCoordinatorCache = nil
+        savedPlanningSession = nil
+    }
+
+    private func assistantDidDismiss() {
+        let saved = PlanningSessionStore().load()
+        savedPlanningSession = saved
+        #if os(macOS)
+        if saved?.state != .generating {
+            showNewTrip = true
+        }
+        #endif
+    }
+
+    private func startAssistant(_ intent: TripIntent) {
+        let coordinator = PlanningCoordinator(
+            intent: intent,
+            provider: intentProvider,
+            resolver: POIResolver(source: poiSource),
+            source: poiSource
+        )
+        planningCoordinatorCache = coordinator
+        assistantCoordinator = coordinator
+    }
+
+    private func startConversationalGeneration(_ intent: TripIntent) {
+        var draft = tripDraft
+        draft.destination = intent.destination.name
+        draft.days = intent.days
+        draft.startDate = intent.startDate
+        let request = GenerationRequest(draft: draft, intent: intent)
+        lastGenerationRequest = request
+        planningCoordinatorCache?.markGenerating()
+        assistantCoordinator = nil
         runGeneration(request)
     }
 
@@ -193,16 +301,25 @@ struct RootView: View {
         generating = true
         genTask = Task {
             do {
-                let trip = try await engine.generate(destination: request.draft.trimmedDestination,
-                                                      prefs: request.draft.preferences,
-                                                      days: request.draft.days,
-                                                      startDate: request.draft.startDate)
+                let trip: Trip
+                if let intent = request.intent {
+                    trip = try await engine.generate(intent: intent)
+                } else {
+                    trip = try await engine.generate(destination: request.draft.trimmedDestination,
+                                                     prefs: request.draft.preferences,
+                                                     days: request.draft.days,
+                                                     startDate: request.draft.startDate)
+                }
                 guard !Task.isCancelled else { return }
                 QuotaState().clear()
+                planningCoordinatorCache?.markCompleted()
+                if request.intent != nil { PlanningSessionStore().delete() }
+                savedPlanningSession = nil
                 quotaBanner = false
                 selection = trip
                 dayIndex = 0
                 mapSelection.selection = nil
+                planningCoordinatorCache = nil
                 generating = false
             } catch {
                 guard !Task.isCancelled else { return }
@@ -210,6 +327,10 @@ struct RootView: View {
                 if case AmapError.quotaExceeded = error {
                     QuotaState().markExhausted()      // 降级：标记 + 持久横幅，行程仍可浏览
                     quotaBanner = true
+                } else if let conflict = error as? PlanningConflict,
+                          let coordinator = planningCoordinatorCache {
+                    coordinator.markConflict(conflict)
+                    assistantCoordinator = coordinator
                 } else {
                     genError = Self.failureMessage(error, stage: engine.stage)
                 }
@@ -237,11 +358,11 @@ struct RootView: View {
     /// ItineraryEngine.Stage → 分步状态（PDR T3.7 / 设计稿 FRAME 7）。
     private func genSteps(_ stage: ItineraryEngine.Stage) -> [GeneratingView.Step] {
         let order: [(ItineraryEngine.Stage, String)] = [
-            (.analyzing, "分析兴趣偏好"),
+            (.analyzing, "理解并锁定需求"),
             (.routing, "规划每日路线"),
-            (.dining, "匹配餐饮与住宿"),
-            (.transit, "优化交通衔接"),
-            (.budgeting, "估算每日预算"),
+            (.dining, "核验餐饮与住宿"),
+            (.transit, "校准真实交通"),
+            (.budgeting, "生成行程说明"),
         ]
         let rank: [ItineraryEngine.Stage: Int] = [
             .analyzing: 0, .routing: 1, .dining: 2, .transit: 3, .budgeting: 4, .done: 5,
@@ -264,6 +385,8 @@ struct RootView: View {
             return "没找到候选地点，换个目的地或调整兴趣偏好再试试。"
         case ItineraryEngine.EngineError.emptyPlan:
             return "生成的行程为空，请重试或调整偏好。"
+        case let conflict as PlanningConflict:
+            return conflict.message
         default:
             return (error as? LocalizedError)?.errorDescription ?? "生成失败：\(error)"
         }

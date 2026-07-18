@@ -22,7 +22,7 @@ public enum ItemKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
-public enum TransitMode: String, Codable, Sendable {
+public enum TransitMode: String, Codable, CaseIterable, Sendable {
     case walk, metro, bus, taxi, drive, train, ferry
 
     public var display: String {
@@ -231,6 +231,7 @@ public final class Trip {
     public var startDate: Date
     public var nights: Int
     public var prefsData: Data           // encoded TripPrefs
+    public var intentData: Data = Data() // encoded TripIntent（对话式规划确认快照；旧行程为空）
     public var lodgingData: Data = Data()  // encoded [LodgingOption]（住宿候选清单）
     public var statusRaw: String
     public var accentSeed: Int           // chooses the sidebar gradient swatch
@@ -240,7 +241,7 @@ public final class Trip {
     public init(id: UUID = UUID(), city: String, subtitle: String = "", adcode: String = "",
                 startDate: Date = .now, nights: Int = 3, prefs: TripPrefs = .init(),
                 status: TripStatus = .draft, accentSeed: Int = 0, days: [DayPlan] = [],
-                lodging: [LodgingOption] = []) {
+                lodging: [LodgingOption] = [], intent: TripIntent? = nil) {
         self.id = id
         self.city = city
         self.subtitle = subtitle
@@ -248,6 +249,7 @@ public final class Trip {
         self.startDate = startDate
         self.nights = nights
         self.prefsData = (try? JSONEncoder().encode(prefs)) ?? Data()
+        self.intentData = intent.flatMap { try? JSONEncoder().encode($0) } ?? Data()
         self.lodgingData = (try? JSONEncoder().encode(lodging)) ?? Data()
         self.statusRaw = status.rawValue
         self.accentSeed = accentSeed
@@ -266,6 +268,10 @@ public final class Trip {
     public var lodgingOptions: [LodgingOption] {
         get { (try? JSONDecoder().decode([LodgingOption].self, from: lodgingData)) ?? [] }
         set { lodgingData = (try? JSONEncoder().encode(newValue)) ?? Data() }
+    }
+    public var planningIntent: TripIntent? {
+        get { try? JSONDecoder().decode(TripIntent.self, from: intentData) }
+        set { intentData = newValue.flatMap { try? JSONEncoder().encode($0) } ?? Data() }
     }
     public var dayCount: Int { nights + 1 }
     public var sortedDays: [DayPlan] { days.sorted { $0.dayIndex < $1.dayIndex } }

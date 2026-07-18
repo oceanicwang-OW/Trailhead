@@ -216,3 +216,19 @@ public struct StubLLMProvider: LLMProvider {
         Data("{\"days\":[]}".utf8)
     }
 }
+
+// MARK: - Conversational intent provider (PDR CP-1.1)
+
+public protocol IntentUnderstandingProvider {
+    func interpret(_ request: IntentInterpretationRequest) async throws -> IntentInterpretationResponse
+}
+
+public struct StubIntentUnderstandingProvider: IntentUnderstandingProvider {
+    public init() {}
+
+    public func interpret(_ request: IntentInterpretationRequest) async throws -> IntentInterpretationResponse {
+        IntentInterpretationResponse(
+            assistantText: "基本信息已经有了。还有必须去的地点、固定预约，或同行人的步行限制吗？"
+        )
+    }
+}

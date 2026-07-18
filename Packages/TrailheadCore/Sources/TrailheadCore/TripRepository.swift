@@ -73,10 +73,11 @@ public struct TripRepository {
     public func create(city: String, subtitle: String = "", adcode: String = "",
                        startDate: Date = .now, nights: Int = 3, prefs: TripPrefs = .init(),
                        status: TripStatus = .draft, accentSeed: Int = 0,
-                       days: [DayPlan] = [], lodging: [LodgingOption] = []) throws -> Trip {
+                       days: [DayPlan] = [], lodging: [LodgingOption] = [],
+                       intent: TripIntent? = nil) throws -> Trip {
         let trip = Trip(city: city, subtitle: subtitle, adcode: adcode, startDate: startDate,
                         nights: nights, prefs: prefs, status: status, accentSeed: accentSeed,
-                        days: days, lodging: lodging)
+                        days: days, lodging: lodging, intent: intent)
         context.insert(trip)
         try context.save()
         return trip

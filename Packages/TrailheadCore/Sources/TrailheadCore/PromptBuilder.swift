@@ -6,7 +6,7 @@ import Foundation
 
 public enum PromptBuilder {
     /// 无评分 POI 的排序中性分（高德景点常缺 rating，避免地标被沉底）。
-    static let unratedScore = 4.0
+    static let unratedScore = CandidateCuration.neutralRating
 
     /// 严格输出 schema（系统 prompt 内联给模型）。
     static let schema = #"""

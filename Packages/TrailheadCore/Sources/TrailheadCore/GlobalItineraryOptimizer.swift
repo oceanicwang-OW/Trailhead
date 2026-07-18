@@ -9,6 +9,7 @@ public enum GlobalItineraryOptimizer {
                                 weekdays: [Int?], city: String,
                                 baseAnchor: POICandidate? = nil,
                                 maxSightsPerDay: Int,
+                                dailyAnchorIDs: Set<String> = [],
                                 beamWidth: Int = 8, depth: Int = 4) -> [[POICandidate]] {
         guard clusters.count > 1, clusters.flatMap({ $0 }).count > 2 else { return clusters }
 
@@ -24,7 +25,8 @@ public enum GlobalItineraryOptimizer {
         for _ in 0..<max(1, depth) {
             var unique: [String: [[POICandidate]]] = [:]
             for state in beam {
-                for neighbor in neighbors(of: state, maxPerDay: maxSightsPerDay) {
+                for neighbor in neighbors(of: state, maxPerDay: maxSightsPerDay,
+                                          dailyAnchorIDs: dailyAnchorIDs) {
                     unique[signature(neighbor)] = neighbor
                 }
             }
@@ -49,8 +51,8 @@ public enum GlobalItineraryOptimizer {
         return best
     }
 
-    private static func neighbors(of state: [[POICandidate]],
-                                  maxPerDay: Int) -> [[[POICandidate]]] {
+    private static func neighbors(of state: [[POICandidate]], maxPerDay: Int,
+                                  dailyAnchorIDs: Set<String>) -> [[[POICandidate]]] {
         var result: [[[POICandidate]]] = []
 
         for source in state.indices where state[source].count > 1 {
@@ -60,7 +62,7 @@ public enum GlobalItineraryOptimizer {
                     let item = next[source].remove(at: itemIndex)
                     next[target].append(item)
                     next[target].sort { $0.id < $1.id }
-                    result.append(next)
+                    if anchorsRemainDistributed(next, anchorIDs: dailyAnchorIDs) { result.append(next) }
                 }
             }
         }
@@ -75,12 +77,22 @@ public enum GlobalItineraryOptimizer {
                         next[right][rightIndex] = temporary
                         next[left].sort { $0.id < $1.id }
                         next[right].sort { $0.id < $1.id }
-                        result.append(next)
+                        if anchorsRemainDistributed(next, anchorIDs: dailyAnchorIDs) { result.append(next) }
                     }
                 }
             }
         }
         return result
+    }
+
+    /// 核心景点数不超过天数时，每天最多一个核心点；由此保证优化交通时不会把两个
+    /// 城市地标合并到同一天、让另一天只剩冷门补充点。
+    private static func anchorsRemainDistributed(_ state: [[POICandidate]],
+                                                 anchorIDs: Set<String>) -> Bool {
+        guard !anchorIDs.isEmpty else { return true }
+        return state.allSatisfy { day in
+            day.lazy.filter { anchorIDs.contains($0.id) }.prefix(2).count <= 1
+        }
     }
 
     private static func objective(_ clusters: [[POICandidate]], prefs: TripPrefs,

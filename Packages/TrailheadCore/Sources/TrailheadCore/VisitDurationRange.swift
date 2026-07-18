@@ -42,6 +42,9 @@ public struct VisitDurationRange: Equatable, Hashable, Sendable {
 
 /// 地图数据源可选提供的结构化游览元数据。所有字段均为 optional：缺失与零值语义不同。
 public struct POIVisitMetadata: Codable, Equatable, Hashable, Sendable {
+    /// 数据源原始 POI 类目码。用于区分真正景点（11/12）与购物、娱乐等活动类 POI；
+    /// nil 表示旧缓存或非高德数据源，调用方应保持兼容而不是直接排除。
+    public var sourceTypeCode: String?
     public var providerParentID: String?
     public var areaSquareMeters: Double?
     public var childPOICount: Int?
@@ -55,7 +58,8 @@ public struct POIVisitMetadata: Codable, Equatable, Hashable, Sendable {
     public var popularityScore: Double?
     public var queueRiskScore: Double?
 
-    public init(providerParentID: String? = nil,
+    public init(sourceTypeCode: String? = nil,
+                providerParentID: String? = nil,
                 areaSquareMeters: Double? = nil,
                 childPOICount: Int? = nil,
                 entranceCount: Int? = nil,
@@ -67,6 +71,7 @@ public struct POIVisitMetadata: Codable, Equatable, Hashable, Sendable {
                 hasInternalTransit: Bool? = nil,
                 popularityScore: Double? = nil,
                 queueRiskScore: Double? = nil) {
+        self.sourceTypeCode = sourceTypeCode
         self.providerParentID = providerParentID
         self.areaSquareMeters = areaSquareMeters
         self.childPOICount = childPOICount

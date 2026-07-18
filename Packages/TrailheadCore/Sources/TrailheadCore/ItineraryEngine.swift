@@ -94,7 +94,9 @@ public final class ItineraryEngine: ObservableObject {
     /// 端到端生成并落库；返回写入的 Trip。
     @discardableResult
     public func generate(destination: String, prefs: TripPrefs,
-                         days: Int, startDate: Date = .now) async throws -> Trip {
+                         days: Int, startDate: Date = .now,
+                         planningConstraints: PlanningConstraints = .init(),
+                         intentSnapshot: TripIntent? = nil) async throws -> Trip {
         diagnostics = GenerationDiagnostics()
         diagnosticStage = nil
         let usage = UsageStore()
@@ -106,31 +108,64 @@ public final class ItineraryEngine: ObservableObject {
         let (adcode, rawCenter) = try await source.geocodeCity(destination)
         let cityCenter = (lat: rawCenter.1, lng: rawCenter.0)
 
-        // 吃住玩均衡：三支柱必含 + 兴趣；菜系/住宿类型替换对应召回词。
+        // 景点为主：三支柱仍召回以取得住宿锚点与顺路餐饮，但只有真正景点进入主线路。
         let categories = AmapCategory.recallCategories(for: prefs)
         var cacheLookups = 0
         var cacheHits = 0
-        let candidates = try await recall.recall(
+        var candidates = try await recall.recall(
             adcode: adcode, tags: categories, freeText: prefs.freeText,
             onCacheLookup: { hit in
                 cacheLookups += 1
                 if hit { cacheHits += 1 }
             }
         )
+        // The regular keyword recall intentionally caps free-text terms. Explicitly
+        // resolved POIs must bypass that cap so every named hard constraint enters
+        // the deterministic candidate pool with data supplied by Amap.
+        if let intentSnapshot {
+            var knownIDs = Set(candidates.map(\.id))
+            for constraint in intentSnapshot.poiConstraints {
+                guard let poiID = constraint.resolvedPOIID, !knownIDs.contains(poiID) else { continue }
+                let keyword = constraint.resolvedName ?? constraint.mention
+                let matches = try await source.searchPOI(keywords: keyword, adcode: adcode)
+                if let exact = matches.first(where: { $0.id == poiID }) {
+                    candidates.append(exact)
+                    knownIDs.insert(poiID)
+                } else if planningConstraints.requiredPOIIDs.contains(poiID) {
+                    throw PlanningConflict(code: .requiredPOINotFound,
+                                           message: "无法从地点服务重新取得必去地点“\(keyword)”。",
+                                           affectedPOIIDs: [poiID])
+                }
+            }
+        }
         guard !candidates.isEmpty else { throw EngineError.noCandidates }
         diagnostics.recalledCandidates = candidates.count
         diagnostics.cacheLookups = cacheLookups
         diagnostics.cacheHits = cacheHits
         set(.routing, 0.4)
 
-        // 确定性规则：点评分 + 偏好加权筛出每类高分点；freeText 点名的点豁免必留。
+        // 确定性规则：城市代表性 + 点评分 + 偏好筛出经典景点；餐饮保持独立辅助池。
         let pinned = Self.pinnedIDs(in: candidates, freeText: prefs.freeText)
         let itineraryCandidates = CandidateCuration.curate(candidates.filter { $0.kind != .lodging },
                                                            tags: prefs.tags, cuisines: prefs.cuisines,
-                                                           budgetPerDay: prefs.budgetPerDay, pinned: pinned)
+                                                           budgetPerDay: prefs.budgetPerDay, pinned: pinned,
+                                                           required: planningConstraints.requiredPOIIDs,
+                                                           preferred: planningConstraints.preferredPOIIDs,
+                                                           excluded: planningConstraints.excludedPOIIDs)
         guard !itineraryCandidates.isEmpty else { throw EngineError.noCandidates }
-        // 住宿先以已筛出的路线候选中位点做保守锚定；距候选路线过远的住宿不参与每天首尾卡点。
-        let provisionalRouteCoords = itineraryCandidates.map { (lat: $0.lat, lng: $0.lng) }
+        // 兼容旧版自由文本入口：被关键词命中的点至少按“想去”保留；新版对话产生的
+        // must/prefer/avoid 约束仍保持更高优先级并覆盖这里的默认偏好。
+        var effectiveConstraints = planningConstraints
+        effectiveConstraints.preferredPOIIDs.formUnion(pinned.subtracting(planningConstraints.excludedPOIIDs))
+        // 住宿锚点只看真正会进入主线路的景点/点名活动。餐饮和“附近可选”数量较多，
+        // 若混入中位点会把住宿中心拉离实际游览区域，进而反向污染每天的路线排序。
+        let explicitlyRequested = effectiveConstraints.requiredPOIIDs
+            .union(effectiveConstraints.preferredPOIIDs)
+        let provisionalRouteCoords = itineraryCandidates.filter { candidate in
+            CandidateCuration.isPrimaryAttraction(candidate)
+                || (explicitlyRequested.contains(candidate.id)
+                    && candidate.kind != .food && candidate.kind != .lodging)
+        }.map { (lat: $0.lat, lng: $0.lng) }
         let initialLodging = Self.lodgingShortlist(from: candidates, prefs: prefs, anchor: cityCenter,
                                                    routeCoords: provisionalRouteCoords,
                                                    maxDistanceMeters: 15_000)
@@ -143,14 +178,33 @@ public final class ItineraryEngine: ObservableObject {
         // startDate 使 D2 周闭馆逐日生效（天序号 → weekday 由 planStops 推导）。
         let perDay = try await ItineraryDayBuilder.planStops(prefs: prefs, candidates: itineraryCandidates,
                                                              days: days, llm: llm, startDate: startDate,
-                                                             city: adcode, baseAnchor: baseAnchor)
+                                                             city: adcode, baseAnchor: baseAnchor,
+                                                             constraints: effectiveConstraints)
         diagnostics.provisionalStops = perDay.reduce(0) { $0 + $1.count }
 
         let routedSource = RouteMemoizingPOISource(base: source)
         let reconciled = await ItineraryDayBuilder.reconcileWithRoutes(
             stops: perDay, prefs: prefs, source: routedSource,
-            city: adcode, startDate: startDate, baseAnchor: baseAnchor
+            city: adcode, startDate: startDate, baseAnchor: baseAnchor,
+            constraints: effectiveConstraints
         )
+        let reconciledIDs = Set(reconciled.flatMap { $0.map(\.candidate.id) })
+        let missingRequired = planningConstraints.requiredPOIIDs.subtracting(reconciledIDs)
+        if !missingRequired.isEmpty {
+            throw PlanningConflict(code: .requiredPOIDropped,
+                                   message: "真实交通时间下无法同时保留全部必去地点。",
+                                   affectedPOIIDs: missingRequired.sorted(),
+                                   repairOptions: [
+                                       RepairOption(title: "延长到 21:00",
+                                                    patches: [.init(path: .defaultDayEnd,
+                                                                    value: .int(21 * 60),
+                                                                    source: .userExplicit)]),
+                                       RepairOption(title: "改为紧凑节奏",
+                                                    patches: [.init(path: .preferencePace,
+                                                                    value: .string(Pace.tight.rawValue),
+                                                                    source: .userExplicit)]),
+                                   ])
+        }
         diagnostics.finalStops = reconciled.reduce(0) { $0 + $1.count }
         let droppedByRealRoutes = diagnostics.provisionalStops - diagnostics.finalStops
         diagnostics.droppedStops = max(0, droppedByRealRoutes)
@@ -177,8 +231,23 @@ public final class ItineraryEngine: ObservableObject {
                                        destination: destination, adcode: adcode,
                                        startDate: startDate, foodPool: foodPool,
                                        optionalByDay: optionalByDay,
-                                       routeSource: routedSource)
+                                       routeSource: routedSource,
+                                       constraints: planningConstraints)
         let transitItems = dayPlans.flatMap(\.items).filter { $0.kind == .transit }
+        if let invalid = transitItems.first(where: {
+            guard let mode = $0.transitMode else { return true }
+            return !planningConstraints.allowedModes.contains(mode)
+        }) {
+            throw PlanningConflict(code: .noAllowedTransport,
+                                   message: "相邻地点之间没有符合要求的交通方式（\(invalid.transitDesc ?? "未知")）。")
+        }
+        if let maximum = planningConstraints.maxWalkingMinutesPerSegment,
+           let excessive = transitItems.first(where: {
+               $0.transitMode == .walk && ($0.transitMinutes ?? 0) > maximum
+           }) {
+            throw PlanningConflict(code: .routeInfeasible,
+                                   message: "有一段需要步行 \(excessive.transitMinutes ?? 0) 分钟，超过每段 \(maximum) 分钟的限制。")
+        }
         diagnostics.transitSegments = transitItems.count
         diagnostics.estimatedTransitSegments = transitItems.filter { $0.transitReliability == .estimated }.count
         diagnostics.verifiedTransitSegments = transitItems.count - diagnostics.estimatedTransitSegments
@@ -189,7 +258,8 @@ public final class ItineraryEngine: ObservableObject {
         set(.budgeting, 0.95)
         let trip = try repository.create(
             city: destination, subtitle: destination, adcode: adcode, startDate: startDate,
-            nights: max(0, days - 1), prefs: prefs, status: .ready, days: dayPlans, lodging: lodging
+            nights: max(0, days - 1), prefs: prefs, status: .ready, days: dayPlans, lodging: lodging,
+            intent: intentSnapshot
         )
         set(.done, 1.0)
         diagnostics.amapCalls = max(0, usage.count(.amap) - initialAmapCalls)
@@ -198,6 +268,19 @@ public final class ItineraryEngine: ObservableObject {
         diagnostics.llmOutputTokens = max(0, usage.llmOutputTokens() - initialOutputTokens)
         GenerationDiagnosticsStore().save(diagnostics)
         return trip
+    }
+
+    /// 对话式规划入口：结构化意图先编译为硬/软约束，再复用同一生成流水线。
+    @discardableResult
+    public func generate(intent: TripIntent) async throws -> Trip {
+        let constraints = try ConstraintCompiler.compile(intent)
+        var prefs = intent.preferences
+        let mentions = intent.poiConstraints.map(\.resolvedName).compactMap { $0 }
+        let recallText = ([intent.rawNotes] + mentions).filter { !$0.isEmpty }.joined(separator: "、")
+        prefs.freeText = recallText
+        return try await generate(destination: intent.destination.name, prefs: prefs,
+                                  days: intent.days, startDate: intent.startDate,
+                                  planningConstraints: constraints, intentSnapshot: intent)
     }
 
     /// freeText 点名命中的候选 id（名称含任一关键词）——这些点豁免筛选、必定保留。
@@ -316,12 +399,17 @@ public final class ItineraryEngine: ObservableObject {
     private func buildDays(_ perDay: [[PlannedStop]], themes: [String?], destination: String,
                            adcode: String, startDate: Date, foodPool: [POICandidate],
                            optionalByDay: [[OptionalVisitOption]],
-                           routeSource: POIDataSource) async -> [DayPlan] {
+                           routeSource: POIDataSource,
+                           constraints: PlanningConstraints) async -> [DayPlan] {
         let cal = Calendar.current
         var result: [DayPlan] = []
         for (index, stops) in perDay.enumerated() {
             let date = cal.date(byAdding: .day, value: index, to: startDate) ?? startDate
-            let items = await ItineraryDayBuilder.buildItems(from: stops, source: routeSource, city: adcode)
+            let items = await ItineraryDayBuilder.buildItems(
+                from: stops, source: routeSource, city: adcode,
+                allowedModes: constraints.allowedModes,
+                maxWalkingMinutes: constraints.maxWalkingMinutesPerSegment
+            )
             let day = DayPlan(dayIndex: index, date: date, cityLabel: destination, items: items)
             day.theme = (themes.indices.contains(index) ? themes[index] : nil) ?? ""
             day.foodOptions = Self.nearbyFood(forItems: items, foodPool: foodPool)

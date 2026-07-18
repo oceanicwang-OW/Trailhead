@@ -71,6 +71,8 @@ final class AmapClientTests: XCTestCase {
         XCTAssertEqual(p.tags, ["角楼", "珍宝馆", "亲子好去处"])   // tag + rectag 合并
         XCTAssertEqual(p.photos, ["http://store.is.autonavi.com/showpic/a.jpg",
                                   "https://aos-comment.amap.com/b.jpg"])
+        XCTAssertEqual(p.visitMetadata.sourceTypeCode, "110000")
+        XCTAssertEqual(p.visitMetadata.popularityScore, 1)
 
         XCTAssertEqual(MockURLProtocol.requests.first?.url?.path, "/v5/place/text")
         XCTAssertEqual(queryValue("keywords", in: MockURLProtocol.requests.first!), "景点")   // 历史古迹→景点 关键词
@@ -97,6 +99,14 @@ final class AmapClientTests: XCTestCase {
         XCTAssertEqual(tags, ["白切鸡", "烧鹅", "虾饺", "老火汤"])
         XCTAssertEqual(AmapClient.parseTags(nil), [])
         XCTAssertEqual(AmapClient.parseTags(["rating": "4.5"]), [])   // 无 tag 字段
+    }
+
+    func testRecallPopularityFallsWithResultRankAndPage() {
+        XCTAssertEqual(AmapClient.recallPopularity(page: 1, index: 0, pages: 3), 1)
+        XCTAssertGreaterThan(AmapClient.recallPopularity(page: 1, index: 24, pages: 3),
+                             AmapClient.recallPopularity(page: 2, index: 0, pages: 3))
+        XCTAssertGreaterThan(AmapClient.recallPopularity(page: 2, index: 0, pages: 3),
+                             AmapClient.recallPopularity(page: 3, index: 24, pages: 3))
     }
 
     func testSearchPOIMapsTagsAndDedupes() async throws {

@@ -8,7 +8,12 @@ import TrailheadCore
 struct NewTripView: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var draft: NewTripDraft
+    var savedSession: PlanningSession?
     var onGenerate: (NewTripDraft) -> Void
+    var onChat: (NewTripDraft) -> Void
+    var onResumeChat: (PlanningSession) -> Void
+    var onGenerateSaved: (PlanningSession) -> Void
+    var onClearSaved: () -> Void
 
     private let allTags = ["美食", "历史古迹", "自然风光", "温泉", "购物",
                            "动漫文化", "夜生活", "亲子", "摄影"]
@@ -30,6 +35,7 @@ struct NewTripView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     destinationField
+                    if let savedSession { conversationDraftCard(savedSession) }
                     HStack(alignment: .top, spacing: 14) { dateField; daysStepper }
                     tagsSection
                     cuisineSection
@@ -57,7 +63,7 @@ struct NewTripView: View {
                 Image(systemName: "sparkles").foregroundStyle(Palette.green)
                 Text("新建行程").font(.system(size: 16, weight: .bold)).foregroundStyle(Palette.textPrimary)
             }
-            Text("告诉我们目的地与偏好，自动生成路线时间线")
+            Text("先填基本信息，也可以让助手继续了解特殊要求")
                 .font(Typo.caption).foregroundStyle(Palette.textSecondary)
         }
         .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 16)
@@ -81,16 +87,32 @@ struct NewTripView: View {
             }
             .accessibilityElement(children: .combine)
 
+            Text("有必去地点、固定预约、老人儿童或步行限制？让行迹先问清楚。")
+                .font(Typo.caption2)
+                .foregroundStyle(Palette.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                draft.rememberDays()
+                onChat(draft)
+            } label: {
+                Label("和行迹聊聊", systemImage: "sparkles")
+                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).frame(height: 44)
+                    .background(draft.trimmedDestination.isEmpty ? Palette.textMuted : Palette.green,
+                                in: RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .disabled(draft.trimmedDestination.isEmpty)
+
             Button {
                 draft.rememberDays()
                 onGenerate(draft)
                 dismiss()
             } label: {
-                Text("生成行程")
-                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity).frame(height: 44)
-                    .background(draft.trimmedDestination.isEmpty ? Palette.textMuted : Palette.green,
-                                in: RoundedRectangle(cornerRadius: 10))
+                Text(savedSession == nil ? "按当前设置直接生成" : "忽略对话要求，按当前表单直接生成")
+                    .font(.system(size: 13.5, weight: .medium)).foregroundStyle(Palette.textSecondary)
+                    .frame(maxWidth: .infinity).frame(minHeight: Metric.minimumControlTarget)
             }
             .buttonStyle(.plain)
             .disabled(draft.trimmedDestination.isEmpty)
@@ -99,6 +121,72 @@ struct NewTripView: View {
     }
 
     // MARK: fields
+
+    private func conversationDraftCard(_ session: PlanningSession) -> some View {
+        let intent = session.intent
+        let userTurns = session.messages.filter { $0.role == .user }.count
+        let fixedCount = intent.poiConstraints.filter { $0.fixedArrivalMinute != nil }.count
+        let detail = conversationDetail(intent, fixedCount: fixedCount)
+        return VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "checkmark.message.fill")
+                    .font(.system(size: 19))
+                    .foregroundStyle(Palette.green)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("已保存与行迹的讨论")
+                        .font(Typo.cardTitle)
+                        .foregroundStyle(Palette.textPrimary)
+                    Text("\(intent.destination.name) · \(userTurns) 轮对话\(detail.isEmpty ? "" : " · \(detail)")")
+                        .font(Typo.caption)
+                        .foregroundStyle(Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 4)
+                Button("清除", role: .destructive, action: onClearSaved)
+                    .buttonStyle(.plain)
+                    .font(Typo.caption)
+                    .foregroundStyle(Palette.red)
+            }
+
+            HStack(spacing: 9) {
+                Button {
+                    onResumeChat(session)
+                } label: {
+                    Label("继续完善", systemImage: "message")
+                        .frame(maxWidth: .infinity).frame(minHeight: Metric.minimumControlTarget)
+                        .background(Palette.fieldBG, in: RoundedRectangle(cornerRadius: 9))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    onGenerateSaved(session)
+                    dismiss()
+                } label: {
+                    Text("按这些要求生成")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity).frame(minHeight: Metric.minimumControlTarget)
+                        .background(Palette.green, in: RoundedRectangle(cornerRadius: 9))
+                }
+                .buttonStyle(.plain)
+            }
+            .font(Typo.caption)
+        }
+        .padding(13)
+        .background(Palette.green.opacity(0.07), in: RoundedRectangle(cornerRadius: Metric.cardRadius))
+        .overlay(RoundedRectangle(cornerRadius: Metric.cardRadius).stroke(Palette.green.opacity(0.25)))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func conversationDetail(_ intent: TripIntent, fixedCount: Int) -> String {
+        var parts: [String] = []
+        if !intent.poiConstraints.isEmpty { parts.append("\(intent.poiConstraints.count) 项地点要求") }
+        if fixedCount > 0 { parts.append("\(fixedCount) 个固定预约") }
+        if let walking = intent.mobility.maxWalkingMinutesPerSegment {
+            parts.append("步行≤\(walking)分钟")
+        }
+        return parts.joined(separator: " · ")
+    }
 
     private func label(_ s: String) -> some View {
         Text(s.uppercased()).font(Typo.caption2.weight(.semibold)).tracking(0.5)

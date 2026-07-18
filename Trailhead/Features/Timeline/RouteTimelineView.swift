@@ -30,6 +30,7 @@ struct RouteTimelineView: View {
     @ObservedObject var selectionStore: MapSelectionStore
     var gutter: CGFloat = Metric.gutter
     var showDayTabs: Bool = true
+    var onAdjustRequirements: ((TripIntent) -> Void)?
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openURL) var openURL   // OptionListRows 扩展（另文件）也要用
     @State private var isEditing = false
@@ -45,6 +46,7 @@ struct RouteTimelineView: View {
     @State var showAllFoodOptions = false
     @State var showAllOptionalVisits = false
     @State var showAllLodgingOptions = false
+    @State var intentSummaryPresentation: IntentSummaryPresentation?
 
     private var day: DayPlan? {
         trip.sortedDays.first { $0.dayIndex == selectedDayIndex } ?? trip.sortedDays.first
@@ -55,6 +57,7 @@ struct RouteTimelineView: View {
             VStack(alignment: .leading, spacing: 0) {
                 header
                 qualitySummary
+                if let intent = trip.planningIntent { planningRequirementButton(intent) }
                 if showDayTabs { dayTabs.padding(.horizontal, 18).padding(.bottom, 6) }
                 if let day {
                     routeSectionLabel
@@ -77,6 +80,10 @@ struct RouteTimelineView: View {
             if let replacingItem {
                 replacementSheet(for: replacingItem)
             }
+        }
+        .sheet(item: $intentSummaryPresentation) { presentation in
+            TripIntentSummarySheet(intent: presentation.intent,
+                                   onAdjust: onAdjustRequirements)
         }
         .onChange(of: trip.id) {
             showAllFoodOptions = false

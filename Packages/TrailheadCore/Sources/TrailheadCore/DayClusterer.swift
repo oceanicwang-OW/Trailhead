@@ -36,7 +36,8 @@ public enum DayClusterer {
         let pts = GeoProjection.project(sights)
 
         // k-means（D6 确定性播种 → 迭代赋质心）。
-        var centroids = initialCentroids(pts, k: k, sights: sights, scores: scores, seedOffset: seedOffset)
+        var centroids = initialCentroids(pts, k: k, sights: sights, scores: scores,
+                                         dayAnchorIDs: dayAnchorIDs, seedOffset: seedOffset)
         var labels = [Int](repeating: 0, count: n)
         for _ in 0..<max(1, iterations) {
             for i in 0..<n { labels[i] = nearest(pts[i], centroids) }
@@ -61,8 +62,11 @@ public enum DayClusterer {
         var stayLoad = [Int](repeating: 0, count: k)
         var hasDayAnchor = [Bool](repeating: false, count: k)
         func isFull(_ c: Int, adding candidate: POICandidate, stay: Int) -> Bool {
-            if hasDayAnchor[c] { return true }
-            if dayAnchorIDs.contains(candidate.id), counts[c] > 0 { return true }
+            // Anchor means “at most one core attraction per day”, not “this day can
+            // contain nothing else”.  The previous form marked an anchored bucket
+            // completely full, so all nearby supporting sights fell through to the
+            // forced-overflow branch and produced highly uneven days.
+            if dayAnchorIDs.contains(candidate.id), hasDayAnchor[c] { return true }
             if counts[c] >= capacity { return true }
             if let budget = stayBudget, stayLoad[c] + stay > budget { return true }
             return false
@@ -71,6 +75,11 @@ public enum DayClusterer {
             let leftAnchor = dayAnchorIDs.contains(sights[$0].id)
             let rightAnchor = dayAnchorIDs.contains(sights[$1].id)
             if leftAnchor != rightAnchor { return leftAnchor && !rightAnchor }
+            if leftAnchor {
+                let leftScore = ScheduleSimulator.score(sights[$0], scores)
+                let rightScore = ScheduleSimulator.score(sights[$1], scores)
+                if leftScore != rightScore { return leftScore > rightScore }
+            }
             let (ra, rb) = (regret($0, pts, centroids), regret($1, pts, centroids))
             return ra == rb ? sights[$0].id < sights[$1].id : ra > rb
         }
@@ -111,13 +120,18 @@ public enum DayClusterer {
     /// 其后每个质心取「到已选质心集合最小距离最大」的点（平手同样按 poi_id 破平）。
     private static func initialCentroids(_ pts: [GeoProjection.Point], k: Int,
                                          sights: [POICandidate], scores: [String: Double],
+                                         dayAnchorIDs: Set<String>,
                                          seedOffset: Int) -> [GeoProjection.Point] {
         let byScore = (0..<pts.count).sorted {
             let (sa, sb) = (ScheduleSimulator.score(sights[$0], scores),
                             ScheduleSimulator.score(sights[$1], scores))
             return sa == sb ? sights[$0].id < sights[$1].id : sa > sb
         }
-        var chosen = [byScore[((seedOffset % pts.count) + pts.count) % pts.count]]
+        let rankedAnchors = byScore.filter { dayAnchorIDs.contains(sights[$0].id) }
+        var chosen = Array(rankedAnchors.prefix(k))
+        if chosen.isEmpty {
+            chosen = [byScore[((seedOffset % pts.count) + pts.count) % pts.count]]
+        }
         while chosen.count < k {
             let next = (0..<pts.count)
                 .filter { !chosen.contains($0) }
